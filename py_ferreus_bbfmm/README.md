@@ -27,7 +27,7 @@ Then in Python:
 import ferreus_bbfmm
 ```
 
-See the `docs/` and `examples/` directories in this package for more detailed
+See the [docs](https://graphic-goose.github.io/ferreus_rbf_rs/ferreus_bbfmm/) and `examples/` directories in this package for more detailed
 usage and API documentation.
 
 ## Attribution and licensing
