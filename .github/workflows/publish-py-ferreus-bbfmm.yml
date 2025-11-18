@@ -22,9 +22,9 @@ jobs:
             extra-args: ""
           - os: windows-latest
             extra-args: ""
-          - os: macos-13   # Intel macOS
+          - os: macos-15-intel   # Intel macOS
             extra-args: ""
-          - os: macos-14   # Apple Silicon macOS
+          - os: macos-latest     # Apple Silicon macOS
             extra-args: ""
 
     steps:
@@ -65,6 +65,6 @@ jobs:
           path: dist
 
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@v1
+        uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist
