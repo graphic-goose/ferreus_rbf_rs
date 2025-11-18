@@ -5,9 +5,9 @@ edition = "2024"
 authors = ["Daniel Owen <daniel.owen@live.com.au>"]
 description = "Parallel black box fast multipole method (BBFMM) library"
 readme = "README.md"
-repository = "https://github.com/graphic-goose/ferreus_rbf_rs"
+repository = ""
 license = "MIT"
-keywords = ["fmm", "bbfmm", "fast-multipole-method", "matrix-vector-product"]
+keywords = ["fmm", "bbfmm", "fast-multipole"]
 rust-version = "1.85.0"
 
 [dependencies]

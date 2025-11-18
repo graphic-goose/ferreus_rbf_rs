@@ -7,7 +7,7 @@ description = "Helper utilities for the ferreus_rbf crate"
 readme = "README.md"
 repository = "https://github.com/graphic-goose/ferreus_rbf_rs"
 license = "MIT"
-keywords = ["rbf", "radial-basis-function", "interpolation"]
+keywords = ["rbf", "radial-basis", "interpolation"]
 rust-version = "1.85.0"
 
 [dependencies]
