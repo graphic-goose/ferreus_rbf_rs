@@ -27,4 +27,5 @@ profile = "release"
 features = ["pyo3/extension-module"]
 
 [project.urls]
+Homepage = "https://graphic-goose.github.io/ferreus_rbf_rs/"
 Documentation = "https://graphic-goose.github.io/ferreus_rbf_rs/ferreus_rbf/"

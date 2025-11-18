@@ -50,7 +50,6 @@
 //!     generate_random_points,
 //!     RBFTestFunctions,
 //! };
-//! use ferreus_rbf_utils;
 //!
 //! // Generate some random data in the unit square
 //! let dimensions = 2;

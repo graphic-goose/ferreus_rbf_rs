@@ -1,0 +1,68 @@
+name: Publish ferreus_bbfmm to PyPI
+
+on:
+  push:
+    tags:
+      - "ferreus_bbfmm-v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  build:
+    name: Build wheels
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            extra-args: ""
+          - os: windows-latest
+            extra-args: ""
+          - os: macos-latest
+            extra-args: "--universal2"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python (abi3 build)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build with maturin
+        uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          args: --release --strip --out dist --skip-existing -m py_ferreus_bbfmm/Cargo.toml ${{ matrix.extra-args }}
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: ferreus_bbfmm-dist-${{ matrix.os }}
+          path: dist
+
+  publish:
+    name: Publish to PyPI (trusted publisher)
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/ferreus_bbfmm/
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Download built wheels
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@v1
+        with:
+          packages-dir: dist
