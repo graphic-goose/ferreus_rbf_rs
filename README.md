@@ -33,6 +33,15 @@ For more detailed API documentation and examples, see the individual crate and
 package READMEs, the Rustdoc pages, and the `docs/` and `examples/` directories
 in each sub‑project.
 
+## Documentation
+
+- Rust:
+  - `ferreus_rbf` - [https://docs.rs/ferreus_rbf/latest/ferreus_rbf/](https://docs.rs/ferreus_rbf/latest/ferreus_rbf/)
+  - `ferreus_bbfmm` - [https://docs.rs/ferreus_bbfmm/latest/ferreus_bbfmm/](https://docs.rs/ferreus_bbfmm/latest/ferreus_bbfmm/)
+- Python:
+  - `ferreus_rbf` - [https://graphic-goose.github.io/ferreus_rbf_rs/ferreus_rbf/](https://graphic-goose.github.io/ferreus_rbf_rs/ferreus_rbf/)
+  - `ferreus_bbfmm` - [https://graphic-goose.github.io/ferreus_rbf_rs/ferreus_bbfmm/](https://graphic-goose.github.io/ferreus_rbf_rs/ferreus_bbfmm/)
+
 ## Installation
 
 ### Rust
