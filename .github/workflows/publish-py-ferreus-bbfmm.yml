@@ -1,9 +1,6 @@
 name: Publish ferreus_bbfmm to PyPI
 
 on:
-  push:
-    tags:
-      - "ferreus_bbfmm-v*"
   workflow_dispatch:
 
 permissions:

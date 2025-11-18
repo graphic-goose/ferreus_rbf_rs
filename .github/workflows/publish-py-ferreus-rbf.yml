@@ -1,9 +1,6 @@
 name: Publish ferreus_rbf to PyPI
 
 on:
-  push:
-    tags:
-      - "ferreus_rbf-v*"
   workflow_dispatch:
 
 permissions:

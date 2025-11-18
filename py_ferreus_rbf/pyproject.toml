@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "ferreus_rbf"
-version = "0.1.0"
+version = "0.1.1"
 readme = "README.md"
 license = "MIT"
 authors = [{ name = "Daniel Owen", email = "daniel.owen@live.com.au"}]
@@ -27,5 +27,5 @@ profile = "release"
 features = ["pyo3/extension-module"]
 
 [project.urls]
-Homepage = "https://graphic-goose.github.io/ferreus_rbf_rs/"
+Homepage = "https://github.com/graphic-goose/ferreus_rbf_rs/"
 Documentation = "https://graphic-goose.github.io/ferreus_rbf_rs/ferreus_rbf/"
