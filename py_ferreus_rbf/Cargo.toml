@@ -1,0 +1,28 @@
+[package]
+name = "py_ferreus_rbf"
+version = "0.1.0"
+edition = "2024"
+authors = ["Daniel Owen <daniel.owen@live.com.au>"]
+description = "Python bindings for the ferreus_rbf crate"
+readme = "../README.md"
+repository = ""
+license = "MIT"
+keywords = ["rbf", "radial-basis-function", "isosurface", "interpolation"]
+rust-version = "1.85.0"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+ferreus_rbf = { path = "../ferreus_rbf" }
+ferreus_rbf_utils = { path = "../ferreus_rbf_utils" }
+faer = "0.23.2"
+pyo3 = { version = "0.26.0", features = ["extension-module"] }
+numpy = "0.26.0"
+faer-ext = { version = "0.7.1", features = ["numpy"] }
+
+[package.metadata.maturin]
+name = "ferreus_rbf"
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "../katex-header.html"]

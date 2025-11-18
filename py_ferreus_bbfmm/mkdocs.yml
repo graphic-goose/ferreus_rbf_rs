@@ -1,0 +1,113 @@
+site_name: "ferreus_bbfmm"
+
+theme:
+  name: material
+
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.expand
+    - navigation.indexes
+    - navigation.footer
+    - toc.integrate
+    - search.suggest
+    - search.highlight
+    - search.share
+    - content.tabs.link
+    - content.code.annotation
+    - content.code.copy
+    - toc.follow
+    - toc.integrate
+
+  palette:
+
+    # Palette toggle for light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+
+    # Palette toggle for dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+copyright: Copyright &copy 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License.
+
+extra:
+  social:
+    - icon: fontawesome/brands/linkedin
+      link: https://linkedin.com/in/dan-owen
+
+plugins:
+- search
+- autorefs
+- mkdocstrings:
+    default_handler: python
+    handlers:
+      python:
+        paths: [ . ]
+        options:
+          members_order: source
+          allow_inspection: false
+          docstring_style: numpy
+          show_source: false
+          show_root_heading: true
+          show_symbol_type_toc: true
+          docstring_section_style: table
+          merge_init_into_class: true
+          extra:
+            load_external_modules: false
+
+markdown_extensions:
+  - admonition
+  - def_list
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.betterem
+  - pymdownx.blocks.caption
+  - pymdownx.caret
+  - pymdownx.mark
+  - pymdownx.tilde
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - pymdownx.snippets:
+      check_paths: true
+      base_path: .
+  - attr_list
+  - toc:
+      permalink: true
+      title: On this page
+  - md_in_html
+
+extra_javascript:
+  - javascripts/katex.js
+  - https://unpkg.com/katex@0/dist/katex.min.js
+  - https://unpkg.com/katex@0/dist/contrib/auto-render.min.js
+
+extra_css:
+  - stylesheets/extras.css
+  - https://unpkg.com/katex@0/dist/katex.min.css
+
+nav:
+  - Home: index.md
+  - Examples:
+      - Matrix-vector product: examples/matrix_vector_product.md
+      - RBF evaluator: examples/rbf_evaluator.md
+  - API:
+      - Overview: api/index.md
+      - FmmKernelType: api/enums/KernelType.md
+      - SpheroidalOrder: api/enums/SpheroidalOrder.md
+      - FmmCompressionType: api/enums/FmmCompressionType.md
+      - FmmParams: api/FmmParams.md
+      - KernelParams: api/KernelParams.md
+      - FmmTree: api/FmmTree.md

@@ -1,0 +1,131 @@
+site_name: "ferreus_rbf"
+
+theme:
+  name: material
+
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.expand
+    - navigation.indexes
+    - navigation.footer
+    - toc.integrate
+    - search.suggest
+    - search.highlight
+    - search.share
+    - content.tabs.link
+    - content.code.annotation
+    - content.code.copy
+    - toc.follow
+    - toc.integrate
+
+  palette:
+
+    # Palette toggle for light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+
+    # Palette toggle for dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+copyright: Copyright &copy 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License.
+
+extra:
+  social:
+    - icon: fontawesome/brands/linkedin
+      link: https://linkedin.com/in/dan-owen
+
+plugins:
+- search
+- autorefs
+- mkdocstrings:
+    default_handler: python
+    handlers:
+      python:
+        paths: [ . ]
+        options:
+          members_order: source
+          allow_inspection: false
+          docstring_style: numpy
+          show_source: false
+          show_root_heading: true
+          show_symbol_type_toc: true
+          docstring_section_style: table
+          merge_init_into_class: true
+          extra:
+            load_external_modules: false
+
+markdown_extensions:
+  - admonition
+  - def_list
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.betterem
+  - pymdownx.blocks.caption
+  - pymdownx.caret
+  - pymdownx.mark
+  - pymdownx.tilde
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - pymdownx.snippets:
+      check_paths: true
+      base_path: .
+  - attr_list
+  - toc:
+      permalink: true
+      title: On this page
+  - md_in_html
+
+extra_javascript:
+  - javascripts/katex.js
+  - https://unpkg.com/katex@0/dist/katex.min.js
+  - https://unpkg.com/katex@0/dist/contrib/auto-render.min.js
+
+extra_css:
+  - stylesheets/extras.css
+  - https://unpkg.com/katex@0/dist/katex.min.css
+
+nav:
+  - Home: index.md
+  - Examples:
+      - Overview: examples.md
+      - Franke's function 2D: examples/franke_2d.md
+      - Isosurface linear: examples/isosurface_linear.md
+      - Isosurface trend linear: examples/isosurface_trend_linear.md
+      - Isosurface spheroidal: examples/isosurface_spheroidal.md
+      - Isosurface spheroidal constant drift: examples/isosurface_spheroidal_drift.md
+  - API:
+      - Overview: api/index.md
+      - Core:
+        - RBFInterpolator: api/RBFInterpolator.md
+        - GlobalTrend: api/GlobalTrend.md
+      - Interpolant Config:
+        - InterpolantSettings: api/InterpolantSettings.md
+        - FittingAccuracyType: api/enums/FittingAccuracyType.md
+        - FittingAccuracy: api/FittingAccuracy.md
+        - Drift: api/enums/Drift.md
+        - RBFKernelType: api/enums/RBFKernelType.md
+        - SpheroidalOrder: api/enums/SpheroidalOrder.md
+      - Config:
+        - Params: api/Params.md
+        - DDMParams: api/DDMParams.md
+        - FmmParams: api/FmmParams.md
+        - FmmCompressionType: api/enums/FmmCompressionType.md
+        - Solvers: api/enums/Solvers.md
+      - Progress & Events: api/progress.md
+      - Utilities:
+        - save_obj: api/save_obj.md
+        - RBFTestFunctions: api/RBFTestFunctions.md

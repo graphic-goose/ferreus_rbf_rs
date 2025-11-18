@@ -1,0 +1,27 @@
+[build-system]
+requires = ["maturin>=1.8,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "ferreus_rbf"
+version = "0.1.0"
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "Daniel Owen", email = "daniel.owen@live.com.au"}]
+description = "Fast, memory efficient radial basis function (RBF) interpolation library"
+requires-python = ">=3.8"
+keywords = [
+    "rbf", 
+    "radial-basis-function", 
+    "isosurface", 
+    "interpolation"
+]
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: Implementation :: PyPy",
+]
+
+[tool.maturin]
+profile = "release"
+features = ["pyo3/extension-module"]

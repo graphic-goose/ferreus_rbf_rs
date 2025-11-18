@@ -1,0 +1,27 @@
+[build-system]
+requires = ["maturin>=1.8,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "ferreus_bbfmm"
+version = "0.1.0"
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "Daniel Owen", email = "daniel.owen@live.com.au"}]
+description = "Parallel black box fast multipole method (BBFMM) library"
+requires-python = ">=3.8"
+keywords = [
+    "fmm", 
+    "bbfmm", 
+    "fast-multipole-method", 
+    "matrix-vector-product"
+]
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: Implementation :: PyPy",
+]
+
+[tool.maturin]
+profile = "release"
+features = ["pyo3/extension-module"]

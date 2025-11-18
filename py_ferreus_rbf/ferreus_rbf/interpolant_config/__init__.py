@@ -1,0 +1,1 @@
+from ferreus_rbf.interpolant_config import *

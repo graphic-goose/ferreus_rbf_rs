@@ -1,0 +1,8 @@
+[workspace]
+members = [
+    "ferreus_bbfmm",
+    "ferreus_rbf",
+    "ferreus_rbf_utils",
+    "py_ferreus_rbf",
+    "py_ferreus_bbfmm",
+]

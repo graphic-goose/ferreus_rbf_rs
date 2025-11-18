@@ -1,0 +1,38 @@
+<div class="my-custom-footer">
+    <p>Copyright &copy 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License.</p>
+</div>
+
+<style>
+:root {
+    --my-footer-height: 3rem;
+}
+
+/* Make room so content isn't hidden behind the footer */
+body {
+    padding-bottom: var(--my-footer-height) !important;
+}
+
+/* Sticky footer fixed to bottom of viewport */
+.my-custom-footer {
+    position: fixed !important;
+    left: 0;
+    right: 0;
+    bottom: 0;
+
+    height: var(--my-footer-height);
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    margin: 0;
+    padding: 0 1rem;
+    border-top: 1px solid #444;
+
+    background-color: inherit;
+    color: inherit;
+    font-size: 0.9em;
+    text-align: center;
+    z-index: 10000;
+}
+</style>

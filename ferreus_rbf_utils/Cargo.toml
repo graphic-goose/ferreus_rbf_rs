@@ -1,0 +1,25 @@
+[package]
+name = "ferreus_rbf_utils"
+version = "0.1.0"
+edition = "2024"
+authors = ["Daniel Owen <daniel.owen@live.com.au>"]
+description = "Helper utilities for the ferreus_rbf crate"
+readme = "README.md"
+repository = ""
+license = "MIT"
+keywords = ["rbf", "radial-basis-function", "interpolation"]
+rust-version = "1.85.0"
+
+[dependencies]
+faer = "0.23.2"
+serde = { version = "1.0.228", features = ["derive", "rc"] }
+ferreus_bbfmm = { path = "../ferreus_bbfmm" }
+
+[profile.dev.package.faer]
+opt-level = 3
+
+[package.metadata.docs.rs]
+rustdoc-args = [
+    "--html-in-header", "katex-header.html",
+    "--html-after-content", "footer.html",
+]

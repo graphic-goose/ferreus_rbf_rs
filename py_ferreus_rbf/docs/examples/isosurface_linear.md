@@ -1,0 +1,8 @@
+???+ example "Intrusive style isosurface example"
+
+    ```python
+    --8<-- "examples/isosurface_linear.py"
+    ```
+
+    Isosurface of `0` signed distance value:
+    ![RBF-interpolated intrusive isosurface](../assets/images/isosurface_linear.png)
