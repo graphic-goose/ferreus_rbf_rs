@@ -13,7 +13,7 @@ rust-version = "1.85.0"
 [dependencies]
 faer = "0.23.2"
 serde = { version = "1.0.228", features = ["derive", "rc"] }
-ferreus_bbfmm = 0.1.0
+ferreus_bbfmm = "0.1.0"
 
 [profile.dev.package.faer]
 opt-level = 3
