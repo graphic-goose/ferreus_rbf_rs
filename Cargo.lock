@@ -358,8 +358,8 @@ dependencies = [
  "equator 0.4.2",
  "faer",
  "faer-traits",
- "ferreus_bbfmm 0.1.0",
- "ferreus_rbf_utils",
+ "ferreus_bbfmm 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ferreus_rbf_utils 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "rand 0.9.2",
  "rayon",
  "roots",
@@ -371,6 +371,17 @@ dependencies = [
 [[package]]
 name = "ferreus_rbf_utils"
 version = "0.1.0"
+dependencies = [
+ "faer",
+ "ferreus_bbfmm 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "serde",
+]
+
+[[package]]
+name = "ferreus_rbf_utils"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1a386be0e6364d0844796801dd7c0ec73660b9f9f2195beecd68a826bc88e178"
 dependencies = [
  "faer",
  "ferreus_bbfmm 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -994,8 +1005,8 @@ dependencies = [
  "csv",
  "faer",
  "faer-ext",
- "ferreus_bbfmm 0.1.0",
- "ferreus_rbf_utils",
+ "ferreus_bbfmm 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ferreus_rbf_utils 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "itertools",
  "numpy",
  "pyo3",
@@ -1009,7 +1020,7 @@ dependencies = [
  "faer",
  "faer-ext",
  "ferreus_rbf",
- "ferreus_rbf_utils",
+ "ferreus_rbf_utils 0.1.0",
  "numpy",
  "pyo3",
 ]

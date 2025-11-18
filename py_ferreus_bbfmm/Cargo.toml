@@ -19,8 +19,8 @@ itertools = "0.14.0"
 pyo3 = { version = "0.26.0", features = ["extension-module"] }
 numpy = "0.26.0"
 faer-ext = { version = "0.7.1", features = ["numpy"] }
-ferreus_rbf_utils = { path = "../ferreus_rbf_utils" }
-ferreus_bbfmm = { path = "../ferreus_bbfmm" }
+ferreus_rbf_utils = "0.1.0"
+ferreus_bbfmm = "0.1.0"
 
 [dev-dependencies]
 csv = "1.4.0"
