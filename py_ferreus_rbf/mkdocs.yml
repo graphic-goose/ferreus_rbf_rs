@@ -1,4 +1,5 @@
 site_name: "ferreus_rbf"
+site_url: "https://graphic-goose.github.io/ferreus_rbf_rs/ferreus_rbf/"
 
 theme:
   name: material
