@@ -22,8 +22,10 @@ jobs:
             extra-args: ""
           - os: windows-latest
             extra-args: ""
-          - os: macos-latest
-            extra-args: "--universal2"
+          - os: macos-13   # Intel macOS
+            extra-args: ""
+          - os: macos-14   # Apple Silicon macOS
+            extra-args: ""
 
     steps:
       - name: Checkout repository
