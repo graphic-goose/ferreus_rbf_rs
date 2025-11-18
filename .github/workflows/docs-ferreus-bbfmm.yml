@@ -1,0 +1,56 @@
+name: Deploy ferreus_bbfmm docs
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - "py_ferreus_bbfmm/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "docs-ferreus-bbfmm"
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install documentation dependencies
+        working-directory: py_ferreus_bbfmm
+        run: |
+          python -m pip install --upgrade pip
+          pip install mkdocs-material mkdocstrings[python] mkdocs-autorefs pymdown-extensions
+
+      - name: Build MkDocs site
+        working-directory: py_ferreus_bbfmm
+        run: mkdocs build --strict --site-dir ../site-ferreus-bbfmm
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site-ferreus-bbfmm
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
