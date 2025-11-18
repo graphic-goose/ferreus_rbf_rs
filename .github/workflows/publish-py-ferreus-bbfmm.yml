@@ -38,7 +38,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           command: build
-          args: --release --strip --out dist --skip-existing -m py_ferreus_bbfmm/Cargo.toml ${{ matrix.extra-args }}
+          args: --release --strip --out dist -m py_ferreus_bbfmm/Cargo.toml ${{ matrix.extra-args }}
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4
