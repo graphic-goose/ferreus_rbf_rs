@@ -1,10 +1,12 @@
-name: Deploy ferreus_bbfmm docs
+name: Deploy docs for ferreus_rbf and ferreus_bbfmm
 
 on:
   push:
     branches: [ main, master ]
     paths:
+      - "py_ferreus_rbf/**"
       - "py_ferreus_bbfmm/**"
+      - ".github/workflows/docs.yml"
   workflow_dispatch:
 
 permissions:
@@ -13,7 +15,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: "docs-ferreus-bbfmm"
+  group: "docs-deployment"
   cancel-in-progress: true
 
 jobs:
@@ -29,19 +31,22 @@ jobs:
           python-version: "3.11"
 
       - name: Install documentation dependencies
-        working-directory: py_ferreus_bbfmm
         run: |
           python -m pip install --upgrade pip
           pip install mkdocs-material mkdocstrings[python] mkdocs-autorefs pymdown-extensions
 
-      - name: Build MkDocs site
+      - name: Build ferreus_rbf docs
+        working-directory: py_ferreus_rbf
+        run: mkdocs build --strict --site-dir ../site/ferreus_rbf
+
+      - name: Build ferreus_bbfmm docs
         working-directory: py_ferreus_bbfmm
-        run: mkdocs build --strict --site-dir ../site-ferreus-bbfmm
+        run: mkdocs build --strict --site-dir ../site/ferreus_bbfmm
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: site-ferreus-bbfmm
+          path: site
 
   deploy:
     needs: build
