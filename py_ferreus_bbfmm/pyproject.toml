@@ -25,3 +25,6 @@ classifiers = [
 [tool.maturin]
 profile = "release"
 features = ["pyo3/extension-module"]
+
+[project.urls]
+Documentation = "https://graphic-goose.github.io/ferreus_rbf_rs/ferreus_bbfmm/"
