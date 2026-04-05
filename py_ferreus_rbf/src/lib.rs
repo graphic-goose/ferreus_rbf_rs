@@ -2,9 +2,9 @@
 //
 // Defines the Python extension module and submodules for the ferreus_rbf interpolation API.
 //
-// Created on: 15 Nov 2025     Author: Daniel Owen 
+// Created on: 15 Nov 2025     Author: Daniel Owen
 //
-// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License. 
+// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License.
 //
 /////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -24,7 +24,10 @@ pub fn ferreus_rbf(m: &Bound<'_, PyModule>) -> PyResult<()> {
     cfg.add_class::<python_bindings::Params>()?;
 
     m.add_submodule(&cfg)?;
-    m.py().import("sys")?.getattr("modules")?.set_item("ferreus_rbf.config", cfg)?;
+    m.py()
+        .import("sys")?
+        .getattr("modules")?
+        .set_item("ferreus_rbf.config", cfg)?;
 
     let prog = PyModule::new(m.py(), "progress")?;
     prog.add_class::<python_bindings::DuplicatesRemoved>()?;
@@ -35,7 +38,10 @@ pub fn ferreus_rbf(m: &Bound<'_, PyModule>) -> PyResult<()> {
     prog.add_class::<python_bindings::Progress>()?;
 
     m.add_submodule(&prog)?;
-    m.py().import("sys")?.getattr("modules")?.set_item("ferreus_rbf.progress", prog)?;
+    m.py()
+        .import("sys")?
+        .getattr("modules")?
+        .set_item("ferreus_rbf.progress", prog)?;
 
     let interp = PyModule::new(m.py(), "interpolant_config")?;
     interp.add_class::<python_bindings::RBFKernelType>()?;
@@ -46,7 +52,10 @@ pub fn ferreus_rbf(m: &Bound<'_, PyModule>) -> PyResult<()> {
     interp.add_class::<python_bindings::FittingAccuracyType>()?;
 
     m.add_submodule(&interp)?;
-    m.py().import("sys")?.getattr("modules")?.set_item("ferreus_rbf.interpolant_config", interp)?;    
+    m.py()
+        .import("sys")?
+        .getattr("modules")?
+        .set_item("ferreus_rbf.interpolant_config", interp)?;
 
     m.add_class::<python_bindings::RBFInterpolator>()?;
     m.add_class::<python_bindings::GlobalTrend>()?;

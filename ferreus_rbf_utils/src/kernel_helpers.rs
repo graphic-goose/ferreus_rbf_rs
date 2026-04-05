@@ -2,14 +2,14 @@
 //
 // Provides parameter and builder types for configuring RBF kernels.
 //
-// Created on: 15 Nov 2025     Author: Daniel Owen 
+// Created on: 15 Nov 2025     Author: Daniel Owen
 //
-// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License. 
+// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License.
 //
 /////////////////////////////////////////////////////////////////////////////////////////////
 
-use serde::{Deserialize, Serialize};
 use crate::utils::KernelType;
+use serde::{Deserialize, Serialize};
 
 /// Defines the [`KernelType`] to use, along with parameter
 /// values for spheroidal kernels.
@@ -18,16 +18,16 @@ pub struct KernelParams {
     /// KernelType enum variant to use.
     pub kernel_type: KernelType,
 
-    /// Controls how quickly the interpolant decays with distance from each point. 
+    /// Controls how quickly the interpolant decays with distance from each point.
     /// Smaller values restrict influence to a local neighborhood, while larger values
     /// produce smoother, broader effects.
-    /// 
+    ///
     /// Typically chosen based on the spacing of your data.
     /// Only used in spheroidal kernels.
     pub base_range: f64,
 
     /// Sets the overall strength of influence each point exerts. Higher values give
-    /// points more weight and stronger local effects. Lower values yield smoother, 
+    /// points more weight and stronger local effects. Lower values yield smoother,
     /// less pronounced variation.
     ///
     /// Works in combination with base_range and the kernel degree.

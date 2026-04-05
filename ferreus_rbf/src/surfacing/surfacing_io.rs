@@ -2,17 +2,17 @@
 //
 // Writes extracted isosurfaces to OBJ files from RBF-generated vertex and face data.
 //
-// Created on: 15 Nov 2025     Author: Daniel Owen 
+// Created on: 15 Nov 2025     Author: Daniel Owen
 //
-// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License. 
+// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License.
 //
 /////////////////////////////////////////////////////////////////////////////////////////////
 
+use faer::MatRef;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::io::{Error, ErrorKind, Result};
 use std::path::Path;
-use faer::MatRef;
 
 /// Write an isosurface to an OBJ file.
 ///
@@ -30,7 +30,7 @@ pub fn save_obj<P: AsRef<Path>>(
     faces: MatRef<usize>,
 ) -> Result<()> {
     let (nv, dv) = (verts.nrows(), verts.ncols());
-    let (nf, k)  = (faces.nrows(), faces.ncols());
+    let (nf, k) = (faces.nrows(), faces.ncols());
 
     if dv != 3 {
         return Err(Error::new(
@@ -54,8 +54,8 @@ pub fn save_obj<P: AsRef<Path>>(
     // If empty, return error
     if nv == 0 || nf == 0 {
         return Err(Error::new(
-            ErrorKind::InvalidInput, 
-            "mesh is empty (no verts or faces)"
+            ErrorKind::InvalidInput,
+            "mesh is empty (no verts or faces)",
         ));
     }
 

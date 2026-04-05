@@ -2,9 +2,9 @@
 //
 // Implements the concrete RBF kernel functions and their faer-compatible evaluations.
 //
-// Created on: 15 Nov 2025     Author: Daniel Owen 
+// Created on: 15 Nov 2025     Author: Daniel Owen
 //
-// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License. 
+// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License.
 //
 /////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -14,6 +14,7 @@ use crate::{
         SPHEROIDAL_CONSTANTS_FIVE, SPHEROIDAL_CONSTANTS_NINE, SPHEROIDAL_CONSTANTS_SEVEN,
         SPHEROIDAL_CONSTANTS_THREE, SpheroidalConstants,
     },
+    utils::{distance_sq, fill_diff_and_distance_sq, scale_in_place},
 };
 use faer::RowRef;
 use ferreus_bbfmm::KernelFunction;
@@ -35,6 +36,24 @@ impl KernelFunction for LinearRbfKernel {
     fn evaluate(&self, target: RowRef<f64>, source: RowRef<f64>) -> f64 {
         let r = crate::get_distance(target, source);
         self.phi(r)
+    }
+
+    #[inline(always)]
+    fn evaluate_value_gradient(
+        &self,
+        target: RowRef<f64>,
+        source: RowRef<f64>,
+        gradient_out: &mut [f64],
+    ) -> Option<f64> {
+        let r2 = fill_diff_and_distance_sq(target, source, gradient_out);
+        if r2 <= f64::EPSILON {
+            gradient_out.fill(0.0);
+            return Some(-r2.sqrt());
+        }
+
+        let r = r2.sqrt();
+        scale_in_place(gradient_out, -1.0 / r);
+        Some(-r)
     }
 }
 
@@ -65,6 +84,26 @@ impl KernelFunction for ThinPlateSplineRbfKernel {
         let r = crate::get_distance(target, source);
         self.phi(r)
     }
+
+    #[inline(always)]
+    fn evaluate_value_gradient(
+        &self,
+        target: RowRef<f64>,
+        source: RowRef<f64>,
+        gradient_out: &mut [f64],
+    ) -> Option<f64> {
+        let r2 = fill_diff_and_distance_sq(target, source, gradient_out);
+
+        if r2 <= f64::EPSILON {
+            gradient_out.fill(0.0);
+            return Some(0.0);
+        }
+
+        let r = r2.sqrt();
+        let factor = 2.0 * r.ln() + 1.0;
+        scale_in_place(gradient_out, factor);
+        Some(r2 * r.ln())
+    }
 }
 
 impl KernelFromParams for ThinPlateSplineRbfKernel {
@@ -90,6 +129,26 @@ impl KernelFunction for CubicRbfKernel {
     fn evaluate(&self, target: RowRef<f64>, source: RowRef<f64>) -> f64 {
         let r = crate::get_distance(target, source);
         self.phi(r)
+    }
+
+    #[inline(always)]
+    fn evaluate_value_gradient(
+        &self,
+        target: RowRef<f64>,
+        source: RowRef<f64>,
+        gradient_out: &mut [f64],
+    ) -> Option<f64> {
+        let r2 = fill_diff_and_distance_sq(target, source, gradient_out);
+
+        if r2 <= f64::EPSILON {
+            gradient_out.fill(0.0);
+            return Some(0.0);
+        }
+
+        let r = r2.sqrt();
+        let factor = 3.0 * r;
+        scale_in_place(gradient_out, factor);
+        Some(r2 * r)
     }
 }
 
@@ -206,8 +265,38 @@ impl<S: SpheroidalSpec> SpheroidalRbfKernel<S> {
 impl<S: SpheroidalSpec> KernelFunction for SpheroidalRbfKernel<S> {
     #[inline(always)]
     fn evaluate(&self, target: RowRef<f64>, source: RowRef<f64>) -> f64 {
-        let r2 = get_distance_sq(target, source);
+        let r2 = distance_sq(target, source);
         self.eval_r2(r2)
+    }
+
+    #[inline(always)]
+    fn evaluate_value_gradient(
+        &self,
+        target: RowRef<f64>,
+        source: RowRef<f64>,
+        gradient_out: &mut [f64],
+    ) -> Option<f64> {
+        let r2 = fill_diff_and_distance_sq(target, source, gradient_out);
+
+        if r2 <= f64::EPSILON {
+            gradient_out.fill(0.0);
+            return Some(self.eval_r2(r2));
+        }
+
+        let sr2 = self.s2 * r2;
+        if sr2 <= self.ip2 {
+            let inv_r = 1.0 / r2.sqrt();
+            let factor = -self.near_slope * inv_r;
+            scale_in_place(gradient_out, factor);
+            return Some(self.eval_r2(r2));
+        }
+
+        let t = 1.0 + sr2;
+        let p = S::POW as f64 + 0.5;
+        let denom = t.powf(p + 1.0);
+        let factor = -2.0 * p * self.s2 * self.far_coef / denom;
+        scale_in_place(gradient_out, factor);
+        Some(self.eval_r2(r2))
     }
 }
 
@@ -226,14 +315,3 @@ pub type Spheroidal5RbfKernel = SpheroidalRbfKernel<Order5>;
 pub type Spheroidal7RbfKernel = SpheroidalRbfKernel<Order7>;
 /// Order-9 spheroidal RBF kernel type alias.
 pub type Spheroidal9RbfKernel = SpheroidalRbfKernel<Order9>;
-
-/// Returns the squared Euclidean distance between two points.
-#[inline(always)]
-pub fn get_distance_sq(target: RowRef<f64>, source: RowRef<f64>) -> f64 {
-    let mut dist = 0.0;
-    for (t, s) in target.iter().zip(source.iter()) {
-        let diff = t - s;
-        dist += diff * diff;
-    }
-    dist
-}

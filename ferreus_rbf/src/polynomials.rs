@@ -2,9 +2,9 @@
 //
 // Evaluates polynomial and Lagrange bases used for drift terms in RBF interpolation.
 //
-// Created on: 15 Nov 2025     Author: Daniel Owen 
+// Created on: 15 Nov 2025     Author: Daniel Owen
 //
-// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License. 
+// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License.
 //
 /////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -79,7 +79,7 @@ pub fn evaluate_lagrange_polynomials(
 mod tests {
     use super::*;
     use equator::assert;
-    use faer::{mat, utils::approx::*, Mat};
+    use faer::{Mat, mat, utils::approx::*};
 
     fn run_case(points: Mat<f64>, degree: i32, expected: Mat<f64>) {
         let (n, d) = points.shape();
@@ -146,8 +146,8 @@ mod tests {
         let points = mat![[1.0, 2.0], [3.0, 4.0]];
         // Basis: [1, x, y, x^2, x*y, y^2]
         let expected = mat![
-            [1.0, 1.0, 2.0,  1.0,  2.0,  4.0],
-            [1.0, 3.0, 4.0,  9.0, 12.0, 16.0],
+            [1.0, 1.0, 2.0, 1.0, 2.0, 4.0],
+            [1.0, 3.0, 4.0, 9.0, 12.0, 16.0],
         ];
         run_case(points, 2, expected);
     }
@@ -173,7 +173,7 @@ mod tests {
         let points = mat![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];
         // Basis: [1, x, y, z, x^2, x*y, x*z, y^2, y*z, z^2]
         let expected = mat![
-            [1.0, 1.0, 2.0, 3.0,  1.0,  2.0,  3.0,  4.0,  6.0,  9.0],
+            [1.0, 1.0, 2.0, 3.0, 1.0, 2.0, 3.0, 4.0, 6.0, 9.0],
             [1.0, 4.0, 5.0, 6.0, 16.0, 20.0, 24.0, 25.0, 30.0, 36.0],
         ];
         run_case(points, 2, expected);

@@ -501,6 +501,39 @@ class RBFInterpolator:
         """
         ...
 
+    def evaluate_with_gradients(
+        self,
+        targets: npt.NDArray[np.float64],
+    ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+        """Evaluate the interpolant and its gradient at `target_points` using a **one-shot** FMM evaluator.
+
+        This is the most convenient way to evaluate a single batch: it builds a
+        temporary FMM tree, evaluates, and discards the evaluator. If a
+        `global_trend` is present, the target points are transformed for evaluation.
+
+        Extents are computed as the **union** of the source and target point
+        bounding boxes to ensure all targets can be assigned to tree boxes.
+
+        Parameters
+        ----------
+        targets : npt.NDArray[np.float64]
+            Coordinates of the target data points with shape (N, D), where N is the number of points
+            and D is the dimensionality.
+
+        Returns
+        -------
+        npt.NDArray[np.float64]
+            Array of interpolated values with shape (N, M), where N is the number of target points
+            and M is the number of columns of values interpolated.
+        npt.NDArray[np.float64]
+            Array of interpolated gradients with shape (N, D X M), where N is the number of target points,
+            D is the dimensionality and M is the number of columns of values interpolated.    
+            The gradient values are stored in batches of D columns, so the first D columns are for each dimension
+            of the first column of values evaluated, the second D columns are for each dimension of the second column
+            of values evaluated etc.
+        """
+        ...
+
     def evaluate_at_source(self, add_nugget: Optional[bool] = False) -> npt.NDArray[np.float64]:
         """Evaluate the interpolant **at the original source points**.
 
@@ -570,6 +603,41 @@ class RBFInterpolator:
         npt.NDArray[np.float64]
             Array of interpolated values with shape (N, M), where N is the number of target points
             and M is the number of columns of values interpolated.
+        """
+        ...
+
+    def evaluate_targets_with_gradients(
+        self,
+        targets: npt.NDArray[np.float64]
+    ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+        """Evaluate the interpolant and gradient using the **stored** evaluator built by [`build_evaluator`][ferreus_rbf.RBFInterpolator.build_evaluator].
+
+        This is the fast path for repeated calls. If a `global_trend` is present,
+        target points are transformed consistently with the stored evaluator.
+
+        Panics
+        ------
+
+        - If called before [`build_evaluator`][ferreus_rbf.RBFInterpolator.build_evaluator].
+        - If any `target_points` lie **outside** the extents used to build the evaluator.
+
+        Parameters
+        ----------
+        targets : npt.NDArray[np.float64]
+            Coordinates of the target data points with shape (N, D), where N is the number of points
+            and D is the dimensionality.
+
+        Returns
+        -------
+        npt.NDArray[np.float64]
+            Array of interpolated values with shape (N, M), where N is the number of target points
+            and M is the number of columns of values interpolated.
+        npt.NDArray[np.float64]
+            Array of interpolated gradients with shape (N, D X M), where N is the number of target points,
+            D is the dimensionality and M is the number of columns of values interpolated.    
+            The gradient values are stored in batches of D columns, so the first D columns are for each dimension
+            of the first column of values evaluated, the second D columns are for each dimension of the second column
+            of values evaluated etc.          
         """
         ...
 

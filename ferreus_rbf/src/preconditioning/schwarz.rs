@@ -2,26 +2,26 @@
 //
 // Implements an overlapping Schwarz preconditioner built on the domain decomposition hierarchy.
 //
-// Created on: 15 Nov 2025     Author: Daniel Owen 
+// Created on: 15 Nov 2025     Author: Daniel Owen
 //
-// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License. 
+// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License.
 //
 /////////////////////////////////////////////////////////////////////////////////////////////
 
 //! # schwarz
-//! 
+//!
 //! Module defining an overlapping Schwarz preconditioner for use with RBF interpolation.
 //!  
 //! This Schwarz preconditioner can be thought of as Restricted Additive Schwarz within
 //! the levels, and Multiplicative Schwarz between levels, as described in Section 4
 //! of [1].
-//! 
+//!
 //! # References
 //! 1.  R. K. Beatson, W. A. Light, and S. Billings. Fast solution of the radial basis
 //!     function interpolation equations: domain decomposition methods. SIAM J. Sci.
 //!     Comput., 22(5):1717–1740 (electronic), 2000.
 //! 2.  Haase, G., Martin, D., Schiffmann, P., Offner, G. (2018). A Domain Decomposition
-//!     Multilevel Preconditioner for Interpolation with Radial Basis Functions. 
+//!     Multilevel Preconditioner for Interpolation with Radial Basis Functions.
 //!     In: Lirkov, I., Margenov, S. (eds) Large-Scale Scientific Computing. LSSC 2017.
 
 use super::domain_decomposition::DDMTree;
@@ -84,8 +84,7 @@ fn solve_fine_level(
     level: &usize,
     interpolant_settings: &InterpolantSettings,
     ortho_poly_matrix: &Option<Mat<f64>>,
-) -> Mat<f64> 
-{
+) -> Mat<f64> {
     let mut s1 = Mat::<f64>::zeros(residuals.nrows(), residuals.ncols());
 
     let s1_ref = &s1;
@@ -140,7 +139,8 @@ fn solve_coarse_level(residuals: Mat<f64>, ddm_tree: &mut DDMTree, add_poly: boo
         .iter()
         .enumerate()
         .for_each(|(local_idx, global_idx)| {
-            sc.row_mut(*global_idx).copy_from(&coeffs.point_coefficients.row(local_idx));
+            sc.row_mut(*global_idx)
+                .copy_from(&coeffs.point_coefficients.row(local_idx));
         });
 
     if coarse_domain.solve_for_poly && add_poly {
@@ -148,9 +148,7 @@ fn solve_coarse_level(residuals: Mat<f64>, ddm_tree: &mut DDMTree, add_poly: boo
         let num_poly = poly_coeffs.nrows();
         let idx_offset = residuals.nrows() - num_poly;
 
-        sc
-            .subrows_mut(idx_offset, num_poly)
-            .copy_from(poly_coeffs);
+        sc.subrows_mut(idx_offset, num_poly).copy_from(poly_coeffs);
     }
 
     sc

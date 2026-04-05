@@ -2,29 +2,29 @@
 //
 // Declares configuration types for domain decomposition, FMM compression, and solver options.
 //
-// Created on: 15 Nov 2025     Author: Daniel Owen 
+// Created on: 15 Nov 2025     Author: Daniel Owen
 //
-// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License. 
+// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License.
 //
 /////////////////////////////////////////////////////////////////////////////////////////////
 
 //! Declares configuration types for domain decomposition, FMM compression, and solver options.
+use crate::interpolant_config::RBFKernelType;
 use ferreus_bbfmm::{self, M2LCompressionType};
 use serde::{Deserialize, Serialize};
-use crate::interpolant_config::RBFKernelType;
 
 /// Parameters controlling construction of the **domain decomposition hierarchy**.
-/// 
+///
 /// `ferreus_rbf` employs a *domain decomposition preconditioner* to accelerate
 /// convergence of the iterative RBF solver. The algorithm recursively partitions
 /// the input point cloud into a hierarchy of overlapping subdomains, within which
 /// local RBF systems are solved directly and combined to form a global preconditioner.
-/// 
+///
 /// This struct defines the key thresholds and ratios governing how that
 /// hierarchy is generated - for example, the number of points permitted per
 /// leaf domain, how much overlap occurs between neighboring subdomains, and
 /// the scale at which coarse levels are formed.
-/// 
+///
 /// ### Intended Usage
 /// This configuration is part of the public API mainly for **developers and
 /// advanced users** who wish to experiment with or tune the decomposition
@@ -33,7 +33,7 @@ use crate::interpolant_config::RBFKernelType;
 /// In general, the default values have been selected to provide
 /// a robust trade-off between memory usage and solver performance across
 /// a wide range of problem sizes.
-/// 
+///
 /// ### Default Values
 /// - `leaf_threshold`: `1024`
 /// - `overlap_quota`: `0.5`
@@ -74,7 +74,7 @@ pub enum FmmCompressionType {
     /// No compression is applied.
     None,
 
-    /// A truncated Singular Value Decompositio (SVD) is 
+    /// A truncated Singular Value Decompositio (SVD) is
     /// performed on the M2L operators.
     SVD,
 
@@ -123,7 +123,7 @@ impl Params {
 
 /// A convenience builder for constructing a [`Params`] instance
 /// with parameters tailored to the selected kernel type.
-/// 
+///
 /// The builder should be called via the [`Params::builder`] method.
 ///
 /// See [`Params`] for details on each field.

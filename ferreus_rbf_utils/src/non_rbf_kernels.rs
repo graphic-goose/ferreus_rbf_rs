@@ -8,7 +8,10 @@
 //
 /////////////////////////////////////////////////////////////////////////////////////////////
 
-use crate::{KernelFromParams, KernelParams};
+use crate::{
+    KernelFromParams, KernelParams,
+    utils::{fill_diff_and_distance_sq, scale_in_place},
+};
 use faer::RowRef;
 use ferreus_bbfmm::KernelFunction;
 
@@ -31,6 +34,26 @@ impl KernelFunction for LaplacianKernel {
     fn evaluate(&self, target: RowRef<f64>, source: RowRef<f64>) -> f64 {
         let r = crate::get_distance(target, source);
         self.phi(r)
+    }
+
+    #[inline(always)]
+    fn evaluate_value_gradient(
+        &self,
+        target: RowRef<f64>,
+        source: RowRef<f64>,
+        gradient_out: &mut [f64],
+    ) -> Option<f64> {
+        let r2 = fill_diff_and_distance_sq(target, source, gradient_out);
+
+        if r2 <= f64::EPSILON {
+            gradient_out.fill(0.0);
+            return Some(0.0);
+        }
+
+        let inv_r = 1.0 / r2.sqrt();
+        let inv_r3 = inv_r * inv_r * inv_r;
+        scale_in_place(gradient_out, -inv_r3);
+        Some(inv_r)
     }
 }
 
@@ -61,6 +84,27 @@ impl KernelFunction for OneOverR2Kernel {
         let r = crate::get_distance(target, source);
         self.phi(r)
     }
+
+    #[inline(always)]
+    fn evaluate_value_gradient(
+        &self,
+        target: RowRef<f64>,
+        source: RowRef<f64>,
+        gradient_out: &mut [f64],
+    ) -> Option<f64> {
+        let r2 = fill_diff_and_distance_sq(target, source, gradient_out);
+
+        if r2 <= f64::EPSILON {
+            gradient_out.fill(0.0);
+            return Some(0.0);
+        }
+
+        let inv_r4 = 1.0 / (r2 * r2);
+        for g in gradient_out.iter_mut() {
+            *g *= -2.0 * inv_r4;
+        }
+        Some(1.0 / r2)
+    }
 }
 
 impl KernelFromParams for OneOverR2Kernel {
@@ -89,6 +133,25 @@ impl KernelFunction for OneOverR4Kernel {
     fn evaluate(&self, target: RowRef<f64>, source: RowRef<f64>) -> f64 {
         let r = crate::get_distance(target, source);
         self.phi(r)
+    }
+
+    #[inline(always)]
+    fn evaluate_value_gradient(
+        &self,
+        target: RowRef<f64>,
+        source: RowRef<f64>,
+        gradient_out: &mut [f64],
+    ) -> Option<f64> {
+        let r2 = fill_diff_and_distance_sq(target, source, gradient_out);
+
+        if r2 <= f64::EPSILON {
+            gradient_out.fill(0.0);
+            return Some(0.0);
+        }
+
+        let inv_r6 = 1.0 / (r2 * r2 * r2);
+        scale_in_place(gradient_out, -4.0 * inv_r6);
+        Some(1.0 / (r2 * r2))
     }
 }
 

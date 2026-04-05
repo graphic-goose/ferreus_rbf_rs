@@ -2,9 +2,9 @@
 //
 // Implements PyO3 bindings, configuration wrappers, and NumPy conversion utilities for ferreus_rbf.
 //
-// Created on: 15 Nov 2025     Author: Daniel Owen 
+// Created on: 15 Nov 2025     Author: Daniel Owen
 //
-// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License. 
+// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License.
 //
 /////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -21,9 +21,9 @@ use std::sync::Arc;
 fn numpy_to_matref<'py, T>(
     py: Python<'py>,
     obj: &'py Py<PyAny>,
-) -> Result<MatRef<'py, T>, &'static str> 
+) -> Result<MatRef<'py, T>, &'static str>
 where
-    T: numpy::Element + Copy
+    T: numpy::Element + Copy,
 {
     if let Ok(array2) = obj.extract::<PyReadonlyArray2<T>>(py) {
         return Ok(array2.into_faer());
@@ -181,26 +181,42 @@ pub struct Message {
 
 fn map_msg_to_py(py: Python<'_>, msg: ferreus_rbf::progress::ProgressMsg) -> Py<PyAny> {
     match msg {
-        ferreus_rbf::progress::ProgressMsg::SolverIteration { iter, residual, progress } => {
-            Py::new(py, SolverIteration { iter, residual, progress })
-                .expect("alloc SolverIteration")
-                .into()
-        }
-        ferreus_rbf::progress::ProgressMsg::SurfacingProgress { isovalue, stage, progress } => {
-            Py::new(py, SurfacingProgress { isovalue, stage, progress })
-                .expect("alloc SurfacingProgress")
-                .into()
-        }
+        ferreus_rbf::progress::ProgressMsg::SolverIteration {
+            iter,
+            residual,
+            progress,
+        } => Py::new(
+            py,
+            SolverIteration {
+                iter,
+                residual,
+                progress,
+            },
+        )
+        .expect("alloc SolverIteration")
+        .into(),
+        ferreus_rbf::progress::ProgressMsg::SurfacingProgress {
+            isovalue,
+            stage,
+            progress,
+        } => Py::new(
+            py,
+            SurfacingProgress {
+                isovalue,
+                stage,
+                progress,
+            },
+        )
+        .expect("alloc SurfacingProgress")
+        .into(),
         ferreus_rbf::progress::ProgressMsg::DuplicatesRemoved { num_duplicates } => {
             Py::new(py, DuplicatesRemoved { num_duplicates })
                 .expect("alloc DuplicatesRemoved")
                 .into()
         }
-        ferreus_rbf::progress::ProgressMsg::Message { message } => {
-            Py::new(py, Message { message })
-                .expect("alloc Message")
-                .into()
-        }
+        ferreus_rbf::progress::ProgressMsg::Message { message } => Py::new(py, Message { message })
+            .expect("alloc Message")
+            .into(),
     }
 }
 
@@ -222,7 +238,6 @@ impl ferreus_rbf::progress::ProgressSink for PyProgressSink {
     }
 }
 
-
 #[pyclass]
 pub struct Progress {
     sink: Arc<dyn ferreus_rbf::progress::ProgressSink>,
@@ -234,7 +249,8 @@ impl Progress {
     #[new]
     #[pyo3(signature=(callback=None))]
     fn new(callback: Option<Py<PyAny>>) -> PyResult<Self> {
-        let sink: Arc<dyn ferreus_rbf::progress::ProgressSink> = Arc::new(PyProgressSink { callback });
+        let sink: Arc<dyn ferreus_rbf::progress::ProgressSink> =
+            Arc::new(PyProgressSink { callback });
         Ok(Self { sink })
     }
 }
@@ -299,7 +315,7 @@ pub enum SpheroidalOrder {
 #[pyclass]
 #[derive(Debug, Clone, Copy)]
 pub struct InterpolantSettings {
-    inner: ferreus_rbf::interpolant_config::InterpolantSettings
+    inner: ferreus_rbf::interpolant_config::InterpolantSettings,
 }
 
 #[pymethods]
@@ -325,14 +341,22 @@ impl InterpolantSettings {
         fitting_accuracy: Option<FittingAccuracy>,
     ) -> PyResult<Self> {
         Ok(Self {
-            inner: ferreus_rbf::interpolant_config::InterpolantSettings { 
+            inner: ferreus_rbf::interpolant_config::InterpolantSettings {
                 kernel_type: kernel_type.into(),
                 spheroidal_order: match spheroidal_order.is_some() {
                     true => match spheroidal_order.unwrap() {
-                        SpheroidalOrder::Three => ferreus_rbf::interpolant_config::SpheroidalOrder::Three,
-                        SpheroidalOrder::Five => ferreus_rbf::interpolant_config::SpheroidalOrder::Five,
-                        SpheroidalOrder::Seven => ferreus_rbf::interpolant_config::SpheroidalOrder::Seven,
-                        SpheroidalOrder::Nine => ferreus_rbf::interpolant_config::SpheroidalOrder::Nine,
+                        SpheroidalOrder::Three => {
+                            ferreus_rbf::interpolant_config::SpheroidalOrder::Three
+                        }
+                        SpheroidalOrder::Five => {
+                            ferreus_rbf::interpolant_config::SpheroidalOrder::Five
+                        }
+                        SpheroidalOrder::Seven => {
+                            ferreus_rbf::interpolant_config::SpheroidalOrder::Seven
+                        }
+                        SpheroidalOrder::Nine => {
+                            ferreus_rbf::interpolant_config::SpheroidalOrder::Nine
+                        }
                     },
                     false => ferreus_rbf::interpolant_config::SpheroidalOrder::Three,
                 },
@@ -341,19 +365,19 @@ impl InterpolantSettings {
                         true => drift.unwrap().into(),
                         false => ferreus_rbf::interpolant_config::get_min_drift(kernel_type.into()),
                     }
-                }, 
-                nugget: nugget.unwrap_or(0.0), 
-                base_range: base_range.unwrap_or(1.0), 
-                total_sill: total_sill.unwrap_or(1.0), 
-                basis_size: 0, 
-                polynomial_degree: -1, 
+                },
+                nugget: nugget.unwrap_or(0.0),
+                base_range: base_range.unwrap_or(1.0),
+                total_sill: total_sill.unwrap_or(1.0),
+                basis_size: 0,
+                polynomial_degree: -1,
                 fitting_accuracy: {
                     match fitting_accuracy.is_some() {
                         true => fitting_accuracy.unwrap().inner,
                         false => FittingAccuracy::default().inner,
                     }
                 },
-            }
+            },
         })
     }
 }
@@ -392,10 +416,7 @@ impl Default for FittingAccuracy {
 impl FittingAccuracy {
     #[new]
     #[pyo3(signature=(tolerance, tolerance_type))]
-    fn new(
-        tolerance: f64,
-        tolerance_type: FittingAccuracyType,
-    ) -> PyResult<Self> {
+    fn new(tolerance: f64, tolerance_type: FittingAccuracyType) -> PyResult<Self> {
         Ok(Self {
             inner: interpolant_config::FittingAccuracy {
                 tolerance,
@@ -431,24 +452,24 @@ impl Params {
         naive_solve_threshold: Option<usize>,
         test_unique: Option<bool>,
     ) -> Self {
-            Self {
-                inner: config::Params {
-                    solver_type: solver_type.unwrap_or(Solvers::FGMRES).into(),
-                    ddm_params: {
-                        match ddm_params.is_some() {
-                            true => ddm_params.unwrap().inner,
-                            false => config::DDMParams::default(),
-                        }
-                    },
-                    fmm_params: {
-                        match fmm_params.is_some() {
-                            true => fmm_params.unwrap().inner,
-                            false => config::FmmParams::new_defaults(kernel_type.into()),
-                        }
-                    },
-                    naive_solve_threshold: naive_solve_threshold.unwrap_or(4096),
-                    test_unique: test_unique.unwrap_or(true),
-            }
+        Self {
+            inner: config::Params {
+                solver_type: solver_type.unwrap_or(Solvers::FGMRES).into(),
+                ddm_params: {
+                    match ddm_params.is_some() {
+                        true => ddm_params.unwrap().inner,
+                        false => config::DDMParams::default(),
+                    }
+                },
+                fmm_params: {
+                    match fmm_params.is_some() {
+                        true => fmm_params.unwrap().inner,
+                        false => config::FmmParams::new_defaults(kernel_type.into()),
+                    }
+                },
+                naive_solve_threshold: naive_solve_threshold.unwrap_or(4096),
+                test_unique: test_unique.unwrap_or(true),
+            },
         }
     }
 }
@@ -544,35 +565,31 @@ impl RBFInterpolator {
         let points: Mat<f64> = points.into_faer().to_owned();
         let values: Mat<f64> = values.into_faer().to_owned();
 
-        let rbfib = ferreus_rbf::RBFInterpolator::builder(
-            points, 
-            values, 
-            interpolant_settings.inner
-        );
+        let rbfib =
+            ferreus_rbf::RBFInterpolator::builder(points, values, interpolant_settings.inner);
 
         let rbfib = match params.is_some() {
             true => rbfib.params(params.unwrap().inner),
             false => rbfib,
         };
 
-        let rbfib =  match global_trend.is_some() {
+        let rbfib = match global_trend.is_some() {
             true => rbfib.global_trend(global_trend.unwrap().inner),
             false => rbfib,
         };
 
         let rbfib = match progress_callback.is_some() {
             true => {
-                let sink_arc = Python::attach(|py| {
-                    progress_callback.unwrap().borrow(py).__clone_sink__()
-                });
+                let sink_arc =
+                    Python::attach(|py| progress_callback.unwrap().borrow(py).__clone_sink__());
                 rbfib.progress_callback(sink_arc)
-            },
+            }
             false => rbfib,
         };
 
         let inner = py.detach(|| rbfib.build());
 
-        Ok(Self {inner} )
+        Ok(Self { inner })
     }
 
     /// Evaluates the interpolator at the given target points.
@@ -591,6 +608,22 @@ impl RBFInterpolator {
         mat_to_numpy(&result, py)
     }
 
+    /// Evaluates the interpolator and gradients at the given target points.
+    #[pyo3(signature = (targets))]
+    fn evaluate_with_gradients<'py>(
+        &self,
+        py: Python<'py>,
+        targets: PyReadonlyArray2<'_, f64>,
+    ) -> (Bound<'py, PyArray2<f64>>, Bound<'py, PyArray2<f64>>) {
+        let target_mat = targets.into_faer().to_owned();
+
+        // Run the heavy work without the GIL
+        let (vals, grads) = py.detach(|| self.inner.evaluate_with_gradients(&target_mat));
+
+        // Convert after we’ve got the GIL again
+        (mat_to_numpy(&vals, py), mat_to_numpy(&grads, py))
+    }
+
     /// Evaluates the interpolator at the source points.
     #[pyo3(signature = (*, add_nugget=false))]
     fn evaluate_at_source<'py>(
@@ -607,7 +640,11 @@ impl RBFInterpolator {
 
     /// Builds the internal evaluator using an optional list of extents.
     #[pyo3(signature = (extents=None))]
-    fn build_evaluator<'py>(&mut self, py: Python<'py>, extents: Option<PyReadonlyArray1<'py, f64>>) {
+    fn build_evaluator<'py>(
+        &mut self,
+        py: Python<'py>,
+        extents: Option<PyReadonlyArray1<'py, f64>>,
+    ) {
         let extents_vec = extents.map(|e| e.to_vec().unwrap());
         py.detach(|| {
             self.inner.build_evaluator(extents_vec);
@@ -625,6 +662,19 @@ impl RBFInterpolator {
         mat_to_numpy(&result, py)
     }
 
+    /// Evaluates the interpolator at the given target points using the pre-built evaluator.
+    fn evaluate_targets_with_gradients<'py>(
+        &mut self,
+        py: Python<'py>,
+        targets: PyReadonlyArray2<'_, f64>,
+    ) -> (Bound<'py, PyArray2<f64>>, Bound<'py, PyArray2<f64>>) {
+        let target_mat = targets.into_faer().to_owned();
+        let (vals, grads) = py.detach(|| self.inner.evaluate_with_gradients(&target_mat));
+
+        // Convert after we’ve got the GIL again
+        (mat_to_numpy(&vals, py), mat_to_numpy(&grads, py))
+    }
+
     fn build_isosurfaces<'py>(
         &mut self,
         py: Python<'py>,
@@ -636,7 +686,8 @@ impl RBFInterpolator {
 
         // Heavy compute without GIL
         let (all_pts, all_faces) = py.detach(|| {
-            self.inner.build_isosurfaces(&extents_vec, &resolution, &isovalues)
+            self.inner
+                .build_isosurfaces(&extents_vec, &resolution, &isovalues)
         });
 
         // Convert once we’re back with the GIL
@@ -657,35 +708,32 @@ impl RBFInterpolator {
     /// Load a model saved by `save_model`, validating format & version.
     #[staticmethod]
     #[pyo3(signature = (path, progress_callback=None))]
-    fn load_model(py: Python<'_>, path: &str, progress_callback: Option<Py<Progress>>) -> PyResult<Self> {
+    fn load_model(
+        py: Python<'_>,
+        path: &str,
+        progress_callback: Option<Py<Progress>>,
+    ) -> PyResult<Self> {
         let sink_arc = match progress_callback.is_some() {
             true => Some(progress_callback.unwrap().borrow(py).__clone_sink__()),
             false => None,
         };
-        let inner = ferreus_rbf::RBFInterpolator::load_model(path, sink_arc)
-            .map_err(model_error_to_py)?;
+        let inner =
+            ferreus_rbf::RBFInterpolator::load_model(path, sink_arc).map_err(model_error_to_py)?;
 
         Ok(Self { inner })
     }
 
     /// Access the stored source points from the interpolator
-    fn source_points<'py>(
-        &self,
-        py: Python<'py>
-    ) -> Bound<'py, PyArray2<f64>> {
+    fn source_points<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
         let points = &self.inner.points;
         mat_to_numpy(&points, py)
     }
 
     /// Access the stored source values from the interpolator
-    fn source_values<'py>(
-        &self,
-        py: Python<'py>
-    ) -> Bound<'py, PyArray2<f64>> {
+    fn source_values<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
         let points = &self.inner.points;
         mat_to_numpy(&points, py)
     }
-
 }
 
 fn model_error_to_py(err: ferreus_rbf::ModelIOError) -> PyErr {
@@ -701,36 +749,57 @@ fn model_error_to_py(err: ferreus_rbf::ModelIOError) -> PyErr {
 
     match err {
         Create { path, source } => io_to_py(&path, &source, "creating"),
-        Open   { path, source } => io_to_py(&path, &source, "opening"),
-        Write  { path, source } => io_to_py(&path, &source, "writing"),
-        Flush  { path, source } => io_to_py(&path, &source, "flushing"),
+        Open { path, source } => io_to_py(&path, &source, "opening"),
+        Write { path, source } => io_to_py(&path, &source, "writing"),
+        Flush { path, source } => io_to_py(&path, &source, "flushing"),
 
-        Serialize { path, source } =>
-            PyOSError::new_err(format!("serializing JSON to {}: {}", path.display(), source)),
-        Parse { path, source } =>
-            PyOSError::new_err(format!("parsing JSON in {}: {}", path.display(), source)),
+        Serialize { path, source } => PyOSError::new_err(format!(
+            "serializing JSON to {}: {}",
+            path.display(),
+            source
+        )),
+        Parse { path, source } => {
+            PyOSError::new_err(format!("parsing JSON in {}: {}", path.display(), source))
+        }
 
-        FormatMismatch { path, found, expected } =>
-            PyOSError::new_err(format!(
-                "unsupported format {:?} (expected {:?}) in {}",
-                found, expected, path.display()
-            )),
-        VersionMismatch { path, found, expected } =>
-            PyOSError::new_err(format!(
-                "unsupported version {} (expected {}) in {}",
-                found, expected, path.display()
-            )),
+        FormatMismatch {
+            path,
+            found,
+            expected,
+        } => PyOSError::new_err(format!(
+            "unsupported format {:?} (expected {:?}) in {}",
+            found,
+            expected,
+            path.display()
+        )),
+        VersionMismatch {
+            path,
+            found,
+            expected,
+        } => PyOSError::new_err(format!(
+            "unsupported version {} (expected {}) in {}",
+            found,
+            expected,
+            path.display()
+        )),
     }
 }
 
 /// Save an isosurface to an obj
 #[pyfunction]
-pub fn save_obj(py: Python, path: &str, name: &str, verts: Py<PyAny>, faces: Py<PyAny>,) -> PyResult<()> {
+pub fn save_obj(
+    py: Python,
+    path: &str,
+    name: &str,
+    verts: Py<PyAny>,
+    faces: Py<PyAny>,
+) -> PyResult<()> {
     let verts_mat = numpy_to_matref::<f64>(py, &verts)
-            .map_err(|_| pyo3::exceptions::PyTypeError::new_err("Expected 1D/2D float64 for verts"))?;
+        .map_err(|_| pyo3::exceptions::PyTypeError::new_err("Expected 1D/2D float64 for verts"))?;
 
-    let faces_mat = numpy_to_matref::<usize>(py, &faces)
-        .map_err(|_| pyo3::exceptions::PyTypeError::new_err("Expected a 1D/2D int array for faces"))?;
+    let faces_mat = numpy_to_matref::<usize>(py, &faces).map_err(|_| {
+        pyo3::exceptions::PyTypeError::new_err("Expected a 1D/2D int array for faces")
+    })?;
 
     ferreus_rbf::save_obj(path, name, verts_mat, faces_mat)?;
 
@@ -766,10 +835,7 @@ impl RBFTestFunctions {
     }
 
     #[staticmethod]
-    fn f2_3d<'py>(
-        py: Python<'py>,
-        points: PyReadonlyArray2<'_, f64>,
-    ) -> Bound<'py, PyArray2<f64>> {
+    fn f2_3d<'py>(py: Python<'py>, points: PyReadonlyArray2<'_, f64>) -> Bound<'py, PyArray2<f64>> {
         let mat_points = points.into_faer().to_owned();
         let values = ferreus_rbf::RBFTestFunctions::f2_3d(&mat_points);
 
@@ -777,10 +843,7 @@ impl RBFTestFunctions {
     }
 
     #[staticmethod]
-    fn f3_3d<'py>(
-        py: Python<'py>,
-        points: PyReadonlyArray2<'_, f64>,
-    ) -> Bound<'py, PyArray2<f64>> {
+    fn f3_3d<'py>(py: Python<'py>, points: PyReadonlyArray2<'_, f64>) -> Bound<'py, PyArray2<f64>> {
         let mat_points = points.into_faer().to_owned();
         let values = ferreus_rbf::RBFTestFunctions::f3_3d(&mat_points);
 
@@ -788,10 +851,7 @@ impl RBFTestFunctions {
     }
 
     #[staticmethod]
-    fn f4_3d<'py>(
-        py: Python<'py>,
-        points: PyReadonlyArray2<'_, f64>,
-    ) -> Bound<'py, PyArray2<f64>> {
+    fn f4_3d<'py>(py: Python<'py>, points: PyReadonlyArray2<'_, f64>) -> Bound<'py, PyArray2<f64>> {
         let mat_points = points.into_faer().to_owned();
         let values = ferreus_rbf::RBFTestFunctions::f4_3d(&mat_points);
 
@@ -799,10 +859,7 @@ impl RBFTestFunctions {
     }
 
     #[staticmethod]
-    fn f5_3d<'py>(
-        py: Python<'py>,
-        points: PyReadonlyArray2<'_, f64>,
-    ) -> Bound<'py, PyArray2<f64>> {
+    fn f5_3d<'py>(py: Python<'py>, points: PyReadonlyArray2<'_, f64>) -> Bound<'py, PyArray2<f64>> {
         let mat_points = points.into_faer().to_owned();
         let values = ferreus_rbf::RBFTestFunctions::f5_3d(&mat_points);
 
@@ -810,10 +867,7 @@ impl RBFTestFunctions {
     }
 
     #[staticmethod]
-    fn f6_3d<'py>(
-        py: Python<'py>,
-        points: PyReadonlyArray2<'_, f64>,
-    ) -> Bound<'py, PyArray2<f64>> {
+    fn f6_3d<'py>(py: Python<'py>, points: PyReadonlyArray2<'_, f64>) -> Bound<'py, PyArray2<f64>> {
         let mat_points = points.into_faer().to_owned();
         let values = ferreus_rbf::RBFTestFunctions::f6_3d(&mat_points);
 
@@ -821,10 +875,7 @@ impl RBFTestFunctions {
     }
 
     #[staticmethod]
-    fn f7_3d<'py>(
-        py: Python<'py>,
-        points: PyReadonlyArray2<'_, f64>,
-    ) -> Bound<'py, PyArray2<f64>> {
+    fn f7_3d<'py>(py: Python<'py>, points: PyReadonlyArray2<'_, f64>) -> Bound<'py, PyArray2<f64>> {
         let mat_points = points.into_faer().to_owned();
         let values = ferreus_rbf::RBFTestFunctions::f7_3d(&mat_points);
 
@@ -832,10 +883,7 @@ impl RBFTestFunctions {
     }
 
     #[staticmethod]
-    fn f8_3d<'py>(
-        py: Python<'py>,
-        points: PyReadonlyArray2<'_, f64>,
-    ) -> Bound<'py, PyArray2<f64>> {
+    fn f8_3d<'py>(py: Python<'py>, points: PyReadonlyArray2<'_, f64>) -> Bound<'py, PyArray2<f64>> {
         let mat_points = points.into_faer().to_owned();
         let values = ferreus_rbf::RBFTestFunctions::f8_3d(&mat_points);
 

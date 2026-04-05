@@ -2,9 +2,9 @@
 //
 // Builds a multi-level overlapping domain decomposition hierarchy for Schwarz preconditioning.
 //
-// Created on: 15 Nov 2025     Author: Daniel Owen 
+// Created on: 15 Nov 2025     Author: Daniel Owen
 //
-// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License. 
+// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License.
 //
 /////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -29,9 +29,8 @@ use rayon::prelude::*;
 use std::{collections::VecDeque, sync::Arc};
 
 use crate::{
-    common, domain::Domain, global_trend::GlobalTrendTransform,
+    common, config::DDMParams, domain::Domain, global_trend::GlobalTrendTransform,
     interpolant_config::InterpolantSettings, rtree,
-    config::DDMParams,
 };
 
 use faer::{Mat, RowRef};
@@ -70,8 +69,7 @@ impl DDMTree {
         interpolant_settings: &Arc<InterpolantSettings>,
         ddm_params: DDMParams,
         global_trend: &Option<GlobalTrendTransform>,
-    ) -> Self
-    {
+    ) -> Self {
         let (num_points, points_ncols) = points.shape();
 
         let mut levels: Vec<Level> = Vec::new();
@@ -190,7 +188,8 @@ impl DDMTree {
 
                 let num_domain_internal_points = internal_indices.len();
 
-                let internal_points = ferreus_rbf_utils::select_mat_rows(&points, &internal_indices);
+                let internal_points =
+                    ferreus_rbf_utils::select_mat_rows(&points, &internal_indices);
 
                 let sample_size = num_domain_internal_points.min(num_coarse_points);
 

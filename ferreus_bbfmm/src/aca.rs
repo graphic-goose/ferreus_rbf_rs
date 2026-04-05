@@ -2,9 +2,9 @@
 //
 // Implements Adaptive Cross Approximation (ACA) for low-rank matrix compression.
 //
-// Created on: 15 Nov 2025     Author: Daniel Owen 
+// Created on: 15 Nov 2025     Author: Daniel Owen
 //
-// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License. 
+// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License.
 //
 /////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -28,7 +28,7 @@ pub fn aca_partial_pivoting<F>(
 ) -> (Mat<f64>, Mat<f64>)
 where
     F: Fn(&usize, &usize, &usize, &usize) -> Mat<f64>,
-{   
+{
     // Track unused rows and columns with binary flags (1 = unused, 0 = used)
     let mut unused_rows = vec![1; num_rows];
     let mut unused_columns = vec![1; num_columns];

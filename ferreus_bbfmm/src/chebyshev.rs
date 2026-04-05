@@ -2,19 +2,23 @@
 //
 // Builds Chebyshev interpolation operators and compressed M2L transfer operators for BBFMM.
 //
-// Created on: 15 Nov 2025     Author: Daniel Owen 
+// Created on: 15 Nov 2025     Author: Daniel Owen
 //
-// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License. 
+// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License.
 //
 /////////////////////////////////////////////////////////////////////////////////////////////
 
 use crate::{
-    aca,
+    KernelFunction, aca,
     bbfmm::{M2LCompressionType, PrecomputeOperators},
-    KernelFunction,
     utils,
 };
-use faer::{Mat, RowRef, row::generic::Row};
+use faer::{
+    ColRef, Mat, RowRef,
+    prelude::{Reborrow, ReborrowMut},
+    row::generic::Row,
+    unzip, zip,
+};
 use itertools::{Itertools, iproduct};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::collections::HashMap;
@@ -22,6 +26,7 @@ use std::collections::HashMap;
 // # References
 // [1] W. Fong, E. Darve, The black-box fast multipole method, Journal of Computational Physics 228 (23) (2009) 8712-8725.
 // [2] M. Messner, B. Bramas, O. Coulaud, E. Darve, Optimized M2L Kernels for the Chebyshev Interpolation based Fast Multipole Method (2012).
+// [3] Rajat Kaushik, Sandeep Kumar. Some Recursive relations of Chebyshev polynomials using standard Recurrence formulas. Int J Stat Appl Math 2016;1(1):43-45.
 
 /// Generates Chebyshev nodes between -1 and 1 of T_n(x) for the given interpolation order.
 fn generate_chebyshev_nodes(interpolation_order: &usize) -> Vec<f64> {
@@ -34,34 +39,74 @@ fn generate_chebyshev_nodes(interpolation_order: &usize) -> Vec<f64> {
         .collect()
 }
 
-/// Calculates Tn(x), the chebyshev polynomials of the first kind,
-/// for k between 0 and interpolation order -1 inclusive.
+/// Calculates the Chebyshev polynomials of the first kind and their derivatives.
 ///
-/// Uses the recurrence relation:
-///  T_0(x) = 1 \n
-///  T_1(x) = x \n
-///  T_{n+1}(x) = 2xT_n(x) - T_{n-1}(x) for n > 1
+/// Uses the recurrence for `T_n` and the derived recurrence for `dT_n/dx`:
+/// - `T_0 = 1`, `T_1 = x`, `T_{n+1} = 2x T_n - T_{n-1}`
+/// - `T'_0 = 0`, `T'_1 = 1`, `T'_{n+1} = 2 T_n + 2x T'_n - T'_{n-1}`
 fn evaluate_chebyshev_polynomials(
-    num_columns: &usize,
-    num_rows: &usize,
-    nodes: &Vec<f64>,
-) -> Mat<f64> {
-    let mut tn_x = Mat::<f64>::zeros(*num_rows as usize, *num_columns as usize);
+    num_columns: usize,
+    num_rows: usize,
+    nodes: &[f64],
+    with_derivatives: bool,
+) -> (Mat<f64>, Option<Mat<f64>>) {
+    let mut tn_x = Mat::<f64>::ones(num_rows, num_columns);
+    let mut dtn_x = if with_derivatives {
+        Some(Mat::<f64>::zeros(num_rows, num_columns))
+    } else {
+        None
+    };
 
-    for i in 0..*num_rows {
-        for j in 0..*num_columns {
-            let value = if j == 0 {
-                1.0
-            } else if j == 1 {
-                nodes[i]
-            } else {
-                2.0 * nodes[i] * tn_x.get(i, j - 1) - tn_x.get(i, j - 2)
-            };
-            tn_x[(i, j)] = value;
+    let nodes_col = ColRef::from_slice(nodes);
+
+    if num_columns > 1 {
+        tn_x.col_mut(1).copy_from(nodes_col);
+
+        if let Some(ref mut dtn) = dtn_x {
+            dtn.col_mut(1).fill(1.0);
         }
     }
 
-    tn_x
+    for j in 2..num_columns {
+        if let Some(ref mut dtn) = dtn_x {
+            let (t_left, t_right) = tn_x.as_mut().split_at_col_mut(j);
+            let (dt_left, dt_right) = dtn.as_mut().split_at_col_mut(j);
+
+            let t_prev = t_left.rb().col(j - 1);
+            let t_prev2 = t_left.rb().col(j - 2);
+            let dt_prev = dt_left.rb().col(j - 1);
+            let dt_prev2 = dt_left.rb().col(j - 2);
+
+            let mut t_curr = t_right.col_mut(0);
+            let mut dt_curr = dt_right.col_mut(0);
+
+            zip!(
+                t_curr.rb_mut(),
+                dt_curr.rb_mut(),
+                nodes_col,
+                t_prev,
+                t_prev2,
+                dt_prev,
+                dt_prev2
+            )
+            .for_each(|unzip!(t, dt, x, t1, t2, dt1, dt2)| {
+                *t = 2.0 * x * t1 - t2;
+                *dt = 2.0 * t1 + 2.0 * x * dt1 - dt2;
+            });
+        } else {
+            let (t_left, t_right) = tn_x.as_mut().split_at_col_mut(j);
+
+            let t_prev = t_left.rb().col(j - 1);
+            let t_prev2 = t_left.rb().col(j - 2);
+            let mut t_curr = t_right.col_mut(0);
+
+            zip!(t_curr.rb_mut(), nodes_col, t_prev, t_prev2).for_each(|unzip!(t, x, t1, t2)| {
+                *t = 2.0 * x * t1 - t2;
+            });
+        }
+    }
+
+    (tn_x, dtn_x)
 }
 
 /// Applies the linear transformation to normalize Chebyshev evaluations into interpolation basis.
@@ -69,53 +114,69 @@ fn evaluate_chebyshev_polynomials(
 fn calculate_sn(
     tn_x: Mat<f64>,
     polynomial_nodes: &Mat<f64>,
-    interpolation_order: &usize,
+    interpolation_order: usize,
 ) -> Mat<f64> {
     let mut sn = tn_x * &polynomial_nodes.transpose();
 
     sn.col_iter_mut().for_each(|col| {
         col.iter_mut().for_each(|element| {
-            *element = (*element * 2.0 - 1.0) / *interpolation_order as f64;
+            *element = (*element * 2.0 - 1.0) / interpolation_order as f64;
         });
     });
     sn
 }
 
+/// Returns `dS/dx` in the reference coordinate `x ∈ [-1, 1]`.
+fn calculate_dsn_dx(
+    dtn_x: Mat<f64>,
+    polynomial_nodes: &Mat<f64>,
+    interpolation_order: usize,
+) -> Mat<f64> {
+    let mut dsn = dtn_x * &polynomial_nodes.transpose();
+    let scale = 2.0 / interpolation_order as f64;
+
+    dsn.col_iter_mut()
+        .for_each(|col| col.iter_mut().for_each(|element| *element *= scale));
+
+    dsn
+}
+
 /// Calculates the Chebyshev weights to transfer from the Chebyshev nodes of a
 /// parent cell to the Chebyshev nodes of its children.
 fn get_cheb_transfer_from_parent_to_children(
-    interpolation_order: &usize,
+    interpolation_order: usize,
     cheb_nodes: &Vec<f64>,
     polynomial_nodes: &Mat<f64>,
 ) -> Mat<f64> {
-    let num_child_cheb_nodes = 2 * *interpolation_order as usize;
+    let num_child_cheb_nodes = 2 * interpolation_order as usize;
 
     // Initialise the one dimensional transfer array.
     // So, using an interpolation order of 3 as an example in one dimension, we go from
     // parent_cheb_nodes = [0.866, 6.12E-17, -0.866] to
     // child_cheb_nodes = [-0.067, -0.5, -0.933, 0.933, 0.5, 0.067]
-    let child_cheb_nodes = (0..num_child_cheb_nodes)
+    let child_cheb_nodes: Vec<f64> = (0..num_child_cheb_nodes)
         .map(|i| {
-            let child = if i < *interpolation_order {
+            let child = if i < interpolation_order {
                 // Calculate the cheb nodes for the first child (left side) in one dimension.
                 cheb_nodes[i] - 1.0
             } else {
                 // Calculate the cheb nodes for the second child (right side) in one dimension.
-                cheb_nodes[i - *interpolation_order] + 1.0
+                cheb_nodes[i - interpolation_order] + 1.0
             };
             child * 0.5
         })
         .collect();
 
     // Evaluate the Chebyshev polynomials at the child Chebyshev nodes.
-    let tn_x = evaluate_chebyshev_polynomials(
-        &interpolation_order,
-        &num_child_cheb_nodes,
+    let (tn_x, _) = evaluate_chebyshev_polynomials(
+        interpolation_order,
+        num_child_cheb_nodes,
         &child_cheb_nodes,
+        false,
     );
 
     // Calculate the sum of the Chebyshev polynomials.
-    calculate_sn(tn_x, &polynomial_nodes, &interpolation_order)
+    calculate_sn(tn_x, &polynomial_nodes, interpolation_order)
 }
 
 /// Returns the relative Morton offsets in an N-dimensional hypercube.
@@ -133,7 +194,7 @@ pub fn calculate_relative_offsets_morton(dim: &usize) -> Mat<usize> {
 /// Calculates the Chebyshev weights to transfer from the Chebyshev nodes of the
 /// children of a parent cell to the Chebyshev nodes of the parent cell.
 fn get_m2m_transfer_matrices(
-    interpolation_order: &usize,
+    interpolation_order: usize,
     cheb_nodes: &Vec<f64>,
     polynomial_nodes: &Mat<f64>,
     dimensions: &usize,
@@ -141,13 +202,13 @@ fn get_m2m_transfer_matrices(
 ) -> Vec<Mat<f64>> {
     // Get the transfer weights to go from cheb nodes of parent to cheb nodes of children.
     let sn = get_cheb_transfer_from_parent_to_children(
-        &interpolation_order,
+        interpolation_order,
         &cheb_nodes,
         &polynomial_nodes,
     );
 
     // Split the transfer weights array in half row wise.
-    let child_transfers = sn.split_at_row(*interpolation_order);
+    let child_transfers = sn.split_at_row(interpolation_order);
 
     // Get an array of the unique transfer vectors for well separated cells based on Morton order.
     let m2m_transfer_vector_array: Mat<usize> = calculate_relative_offsets_morton(&dimensions);
@@ -437,16 +498,14 @@ fn get_permutation_lookups(
         .unique()
         .collect();
 
-    let axis_sign_permutations =
-        utils::cartesian_product::<i32>(&vec![-1, 1], *dimensions);
+    let axis_sign_permutations = utils::cartesian_product::<i32>(&vec![-1, 1], *dimensions);
 
     let num_axis_order_permutations: usize = axis_order_permutations.len();
     let num_axis_sign_permutations = axis_sign_permutations.shape().0;
 
     let multi_indices_range: Vec<usize> = (1..interpolation_order + 1).collect();
 
-    let multi_indices =
-        utils::cartesian_product::<usize>(&multi_indices_range, *dimensions);
+    let multi_indices = utils::cartesian_product::<usize>(&multi_indices_range, *dimensions);
 
     let unique_diagonal_permutation_indices: Vec<Vec<usize>> = axis_order_permutations
         .iter()
@@ -531,8 +590,7 @@ fn generate_chebyshev_target_points(
     dimensions: &usize,
     length: &f64,
 ) -> Mat<f64> {
-    let mut chebyshev_target_points =
-        utils::cartesian_product::<f64>(&nodes, *dimensions);
+    let mut chebyshev_target_points = utils::cartesian_product::<f64>(&nodes, *dimensions);
 
     chebyshev_target_points.row_iter_mut().for_each(|row| {
         row.iter_mut().for_each(|element| *element *= 0.5 * length);
@@ -555,8 +613,7 @@ fn generate_chebyshev_source_points(
         .map(|i| i as f64)
         .collect();
 
-    let mut chebyshev_source_points =
-        utils::cartesian_product::<f64>(&locations_vec, *dimensions);
+    let mut chebyshev_source_points = utils::cartesian_product::<f64>(&locations_vec, *dimensions);
 
     chebyshev_source_points.row_iter_mut().for_each(|row| {
         row.iter_mut().enumerate().for_each(|(idx, item)| {
@@ -591,30 +648,30 @@ fn generate_chebyshev_source_points(
 ///
 /// PrecomputeOperators - Struct containing precomputed approximation operators.
 pub fn precompute_approximation_operators<K: KernelFunction + Send + Sync>(
-    interpolation_order: &usize,
-    dimensions: &usize,
-    radius: &f64,
-    depth: &u64,
+    interpolation_order: usize,
+    dimensions: usize,
+    radius: f64,
+    depth: u64,
     kernel: &K,
     compression_type: &M2LCompressionType,
-    epsilon: &f64,
+    epsilon: f64,
 ) -> PrecomputeOperators {
-    let num_child_cells = (2 as usize).pow(*dimensions as u32);
-    let num_nodes_nd = interpolation_order.pow(*dimensions as u32);
+    let num_child_cells = (2 as usize).pow(dimensions as u32);
+    let num_nodes_nd = interpolation_order.pow(dimensions as u32);
 
     // Generate the one dimensional Chebyshev nodes.
     let nodes = generate_chebyshev_nodes(&interpolation_order);
 
     // Generate the Chebyshev nodes for the given dimensions.
-    let nodes_nd = utils::cartesian_product::<f64>(&nodes, *dimensions);
+    let nodes_nd = utils::cartesian_product::<f64>(&nodes, dimensions);
 
     // Evaluate the Chebyshev polynomials of the first kind at the nodes.
-    let polynomial_nodes =
-        evaluate_chebyshev_polynomials(&interpolation_order, &interpolation_order, &nodes);
+    let (polynomial_nodes, _) =
+        evaluate_chebyshev_polynomials(interpolation_order, interpolation_order, &nodes, false);
 
     // Get the matrices of multipole to multipole transfer coefficients (Chebyshev weights).
     let m2m_transfer_matrices = get_m2m_transfer_matrices(
-        &interpolation_order,
+        interpolation_order,
         &nodes,
         &polynomial_nodes,
         &dimensions,
@@ -638,11 +695,11 @@ pub fn precompute_approximation_operators<K: KernelFunction + Send + Sync>(
 
     // Parallel loop to calculate the compressed M2L operators for each level in parallel.
     let level_operators: Vec<(usize, HashMap<usize, Mat<f64>>, HashMap<usize, Mat<f64>>)> = (2
-        ..*depth as usize + 1)
+        ..depth as usize + 1)
         .into_par_iter()
         .map(|level| {
             // Length of the cell at the current level.
-            let cell_length_level = *radius / (2usize.pow(level as u32 - 1)) as f64;
+            let cell_length_level = radius / (2usize.pow(level as u32 - 1)) as f64;
 
             // Generate Chebyshev target points.
             let target_points =
@@ -701,11 +758,7 @@ pub fn precompute_approximation_operators<K: KernelFunction + Send + Sync>(
                         vt_level.insert(i, truncated_vt);
                     }
                     M2LCompressionType::SVD => {
-                        let a_matrix = utils::get_a_matrix(
-                            &source_points,
-                            &target_points,
-                            kernel,
-                        );
+                        let a_matrix = utils::get_a_matrix(&source_points, &target_points, kernel);
 
                         let svd = a_matrix.svd().unwrap();
                         let ur = svd.U(); // Left singular vectors (k × k)
@@ -726,11 +779,7 @@ pub fn precompute_approximation_operators<K: KernelFunction + Send + Sync>(
                     }
                     M2LCompressionType::None => {
                         // Create full-size M2L reference operators.
-                        let k_values = utils::get_a_matrix(
-                            &source_points,
-                            &target_points,
-                            kernel,
-                        );
+                        let k_values = utils::get_a_matrix(&source_points, &target_points, kernel);
 
                         u_level.insert(i, k_values);
                     }
@@ -780,13 +829,14 @@ pub fn precompute_approximation_operators<K: KernelFunction + Send + Sync>(
 /// the tensor-product weights used to interpolate the corresponding input point
 /// onto the Chebyshev basis of the cell.
 pub fn get_approximation_coefficients(
-    interpolation_order: &usize,
+    interpolation_order: usize,
     cell_point_locations: &mut Mat<f64>,
     center: &Vec<f64>,
     length: &f64,
     polynomial_nodes: &Mat<f64>,
     dimensions: &usize,
-) -> Mat<f64> {
+    evaluate_gradients: bool,
+) -> ApproximationCoefficients {
     // Scale points to the [-1, 1]^d hypercube.
     cell_point_locations.row_iter_mut().for_each(|row| {
         row.iter_mut().enumerate().for_each(|(idx, element)| {
@@ -794,45 +844,95 @@ pub fn get_approximation_coefficients(
         });
     });
 
-    let mut one_d_transfer_coefficients: Vec<Mat<f64>> = Vec::new();
+    let mut one_d_transfer_coefficients: Vec<Mat<f64>> = Vec::with_capacity(*dimensions);
+    let mut one_d_derivative_coefficients: Option<Vec<Mat<f64>>> =
+        evaluate_gradients.then(|| Vec::with_capacity(*dimensions));
 
     for d in 0..*dimensions as usize {
-        let column_vec = cell_point_locations.col_as_slice(d).to_vec();
-        let tn_x = evaluate_chebyshev_polynomials(
-            &interpolation_order,
-            &cell_point_locations.nrows(),
-            &column_vec,
-        );
-        let sn = calculate_sn(tn_x, &polynomial_nodes, &interpolation_order);
+        let column_vec = cell_point_locations.col_as_slice(d);
 
-        one_d_transfer_coefficients.push(sn);
+        if evaluate_gradients {
+            let (tn_x, dtn_x) = evaluate_chebyshev_polynomials(
+                interpolation_order,
+                cell_point_locations.nrows(),
+                &column_vec,
+                true,
+            );
+            let sn = calculate_sn(tn_x, polynomial_nodes, interpolation_order);
+            let mut dsn_dx =
+                calculate_dsn_dx(dtn_x.unwrap(), polynomial_nodes, interpolation_order);
+
+            // Convert derivative from reference coord x to physical coord X:
+            // x = (X - center) / (length/2)  =>  dx/dX = 2/length.
+            dsn_dx
+                .col_iter_mut()
+                .for_each(|col| col.iter_mut().for_each(|v| *v *= 2.0 / *length));
+
+            one_d_transfer_coefficients.push(sn);
+            one_d_derivative_coefficients.as_mut().unwrap().push(dsn_dx);
+        } else {
+            let (tn_x, _) = evaluate_chebyshev_polynomials(
+                interpolation_order,
+                cell_point_locations.nrows(),
+                &column_vec,
+                false,
+            );
+            let sn = calculate_sn(tn_x, polynomial_nodes, interpolation_order);
+            one_d_transfer_coefficients.push(sn);
+        }
     }
 
     let num_columns = interpolation_order.pow(*dimensions as u32);
-    let indices: Vec<usize> = (0..*interpolation_order).into_iter().collect();
-
-    let tensor_product_indices =
-        utils::cartesian_product::<usize>(&indices, *dimensions);
 
     let mut transfer_coefficients = Mat::<f64>::zeros(cell_point_locations.nrows(), num_columns);
+    let mut gradient_coefficients = evaluate_gradients
+        .then(|| Mat::<f64>::zeros(cell_point_locations.nrows(), num_columns * *dimensions));
 
-    transfer_coefficients
-        .row_iter_mut()
-        .enumerate()
-        .for_each(|(i, row)| {
-            row.iter_mut().enumerate().for_each(|(idx, element)| {
-                *element = 1.0;
+    let dims = *dimensions;
+    let mut multi_idx = [0usize; 3];
+    let nrows = cell_point_locations.nrows();
+    for i in 0..nrows {
+        for col in 0..num_columns {
+            let mut rem = col;
+            for d in (0..dims).rev() {
+                multi_idx[d] = rem % interpolation_order;
+                rem /= interpolation_order;
+            }
 
-                let wanted_indices = tensor_product_indices.row(idx);
+            let mut v = 1.0;
+            for d in 0..dims {
+                v *= one_d_transfer_coefficients[d][(i, multi_idx[d])];
+            }
+            transfer_coefficients[(i, col)] = v;
 
-                for (d, coeffs) in one_d_transfer_coefficients.iter().enumerate() {
-                    let poly_idx = wanted_indices[d];
-                    *element *= coeffs[(i, poly_idx)];
+            if let Some(ref mut grads) = gradient_coefficients {
+                let derivs = one_d_derivative_coefficients.as_ref().unwrap();
+                for g in 0..dims {
+                    let mut v = derivs[g][(i, multi_idx[g])];
+                    for d in 0..dims {
+                        if d != g {
+                            v *= one_d_transfer_coefficients[d][(i, multi_idx[d])];
+                        }
+                    }
+                    grads[(i, g * num_columns + col)] = v;
                 }
-            });
-        });
+            }
+        }
+    }
 
-    transfer_coefficients
+    ApproximationCoefficients {
+        values: transfer_coefficients,
+        gradients: gradient_coefficients,
+    }
+}
+
+/// Coefficients to map points in a cell to the Chebyshev nodes of the cell.
+///
+/// - `values`: `N × p^d` tensor-product weights for interpolating values.
+/// - `gradients`: `N × (p^d * D)` tensor-product weights for interpolating gradients.
+pub struct ApproximationCoefficients {
+    pub values: Mat<f64>,
+    pub gradients: Option<Mat<f64>>,
 }
 
 /// Scales Chebyshev nodes from the reference domain `[-1, 1]^d`

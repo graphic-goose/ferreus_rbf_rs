@@ -2,17 +2,17 @@
 //
 // Defines progress reporting messages, sinks, and helper functions for long-running processes.
 //
-// Created on: 15 Nov 2025     Author: Daniel Owen 
+// Created on: 15 Nov 2025     Author: Daniel Owen
 //
-// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License. 
+// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License.
 //
 /////////////////////////////////////////////////////////////////////////////////////////////
 
 //! Progress reporting primitives for long-running computations.
 
+use std::fmt::Debug;
 use std::sync::{Arc, mpsc};
 use std::thread;
-use std::fmt::Debug;
 
 /// Progress events emitted during long-running computations.
 #[derive(Debug, Clone)]
@@ -21,10 +21,18 @@ pub enum ProgressMsg {
     DuplicatesRemoved { num_duplicates: usize },
 
     /// Event indicating iteration status for an iterative solver.
-    SolverIteration { iter: usize, residual: f64, progress: f64},
+    SolverIteration {
+        iter: usize,
+        residual: f64,
+        progress: f64,
+    },
 
     /// Event indicating progress for isosurface extraction.
-    SurfacingProgress { isovalue: f64, stage: String, progress: f64},
+    SurfacingProgress {
+        isovalue: f64,
+        stage: String,
+        progress: f64,
+    },
 
     /// Arbitrary informational message.
     Message { message: String },
@@ -72,8 +80,10 @@ where
 /// current residual and the requested accuracy tolerance. Returns
 /// the percentage as a value between [0, 1].
 #[inline]
-pub (crate) fn progress_from_rel(current_res: f64, start_res: f64, target_res: f64) -> f64 {
-    if current_res <= target_res { 1.0 } else { 
+pub(crate) fn progress_from_rel(current_res: f64, start_res: f64, target_res: f64) -> f64 {
+    if current_res <= target_res {
+        1.0
+    } else {
         (start_res.log10() - current_res.log10()) / (start_res.log10() - target_res.log10())
-     }
+    }
 }

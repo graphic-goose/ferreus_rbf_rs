@@ -2,11 +2,11 @@
 //
 // Organises modules for isosurface extraction and I/O built on RBF interpolants.
 //
-// Created on: 15 Nov 2025     Author: Daniel Owen 
+// Created on: 15 Nov 2025     Author: Daniel Owen
 //
-// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License. 
+// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License.
 //
 /////////////////////////////////////////////////////////////////////////////////////////////
 
-pub mod surfacing_io;
 pub mod surface_nets;
+pub mod surfacing_io;

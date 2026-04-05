@@ -2,9 +2,9 @@
 //
 // Provides a simple KD-tree implementation for nearest-neighbour queries in RBF workflows.
 //
-// Created on: 15 Nov 2025     Author: Daniel Owen 
+// Created on: 15 Nov 2025     Author: Daniel Owen
 //
-// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License. 
+// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License.
 //
 /////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -403,10 +403,14 @@ mod tests {
         // points: origin and axis-aligned points at distance exactly r
         let mut points = Mat::<f64>::zeros(4, 2);
         // 0: (0,0), 1: (0.2,0), 2: (0,0.2), 3: (0.2,0.2)
-        points[(0, 0)] = 0.0; points[(0, 1)] = 0.0;
-        points[(1, 0)] = 0.2; points[(1, 1)] = 0.0;
-        points[(2, 0)] = 0.0; points[(2, 1)] = 0.2;
-        points[(3, 0)] = 0.2; points[(3, 1)] = 0.2;
+        points[(0, 0)] = 0.0;
+        points[(0, 1)] = 0.0;
+        points[(1, 0)] = 0.2;
+        points[(1, 1)] = 0.0;
+        points[(2, 0)] = 0.0;
+        points[(2, 1)] = 0.2;
+        points[(3, 0)] = 0.2;
+        points[(3, 1)] = 0.2;
 
         let tree = KDTree::new(&points);
         let q = make_query_point(points.row(0));
@@ -464,8 +468,10 @@ mod tests {
     fn duplicates_are_all_returned_at_zero_radius() {
         // Two identical points at index 0 and 1
         let mut points = Mat::<f64>::zeros(2, 2);
-        points[(0, 0)] = 0.3; points[(0, 1)] = 0.7;
-        points[(1, 0)] = 0.3; points[(1, 1)] = 0.7;
+        points[(0, 0)] = 0.3;
+        points[(0, 1)] = 0.7;
+        points[(1, 0)] = 0.3;
+        points[(1, 1)] = 0.7;
 
         let tree = KDTree::new(&points);
         let q = make_query_point(points.row(0));

@@ -72,7 +72,7 @@ pub enum FmmKernelType {
     SpheroidalRbf,
     Laplacian,
     OneOverR2,
-    OneOverR4
+    OneOverR4,
 }
 
 /// The implemented orders for the spheroidal kernel.
@@ -161,9 +161,9 @@ impl KernelParams {
                 if let Some(order) = spheroidal_order {
                     match order {
                         SpheroidalOrder::Three => KernelType::Spheroidal3Rbf,
-                        SpheroidalOrder::Five  => KernelType::Spheroidal5Rbf,
+                        SpheroidalOrder::Five => KernelType::Spheroidal5Rbf,
                         SpheroidalOrder::Seven => KernelType::Spheroidal7Rbf,
-                        SpheroidalOrder::Nine  => KernelType::Spheroidal9Rbf,
+                        SpheroidalOrder::Nine => KernelType::Spheroidal9Rbf,
                     }
                 } else {
                     KernelType::Spheroidal3Rbf
@@ -255,12 +255,13 @@ impl FmmTree {
         Ok(())
     }
 
-    #[pyo3(signature=(weights, target_points))]
+    #[pyo3(signature=(weights, target_points, evaluate_gradients=false))]
     fn evaluate(
         &mut self,
         py: Python<'_>,
         weights: Py<PyAny>,
         target_points: Py<PyAny>,
+        evaluate_gradients: bool,
     ) -> PyResult<()> {
         let w = numpy_to_matref(py, &weights).map_err(|_| {
             pyo3::exceptions::PyTypeError::new_err("Expected 1D/2D float64 for weights")
@@ -270,24 +271,28 @@ impl FmmTree {
                 pyo3::exceptions::PyTypeError::new_err("Expected 1D/2D float64 for target_points")
             })?
             .to_owned();
-        self.inner.evaluate(&w, &x).map_err(|err| {
+        self.inner.evaluate(&w, &x, evaluate_gradients).map_err(|err| {
             let msg = match err {
                 FmmError::PointOutsideTree { point_index } => format!(
                     "FMM evaluation failed: target point at row {} lies outside the tree extents",
                     point_index
                 ),
+                FmmError::KernelDoesNotSupportGradients => {
+                    "FMM evaluation failed: gradient evaluation requested but kernel does not support gradients".to_string()
+                }
             };
             pyo3::exceptions::PyValueError::new_err(msg)
         })?;
         Ok(())
     }
 
-    #[pyo3(signature=(weights, target_points))]
+    #[pyo3(signature=(weights, target_points, evaluate_gradients=false))]
     fn evaluate_leaves(
         &mut self,
         py: Python<'_>,
         weights: Py<PyAny>,
         target_points: Py<PyAny>,
+        evaluate_gradients: bool,
     ) -> PyResult<()> {
         let w = numpy_to_matref(py, &weights).map_err(|_| {
             pyo3::exceptions::PyTypeError::new_err("Expected 1D/2D float64 for weights")
@@ -298,13 +303,16 @@ impl FmmTree {
             })?
             .to_owned();
         self.inner
-            .evaluate_leaves(&w, &x)
+            .evaluate_leaves(&w, &x, evaluate_gradients)
             .map_err(|err| {
                 let msg = match err {
                     FmmError::PointOutsideTree { point_index } => format!(
                         "FMM leaf evaluation failed: target point at row {} lies outside the tree extents",
                         point_index
                     ),
+                    FmmError::KernelDoesNotSupportGradients => {
+                        "FMM leaf evaluation failed: gradient evaluation requested but kernel does not support gradients".to_string()
+                    }
                 };
                 pyo3::exceptions::PyValueError::new_err(msg)
             })?;
@@ -314,6 +322,16 @@ impl FmmTree {
     /// Returns the last computed target values as a NumPy array.
     fn target_values(&self, py: Python<'_>) -> Py<PyAny> {
         mat_to_numpy(&self.inner.target_values(), py)
+    }
+
+    /// Returns the last computed gradients as a NumPy array.
+    fn target_gradients(&self, py: Python<'_>) -> Option<Py<PyAny>> {
+        let target_grads = self.inner.target_gradients();
+        if let Some(grads) = target_grads {
+            Some(mat_to_numpy(grads, py))
+        } else {
+            None
+        }
     }
 
     /// Returns the source points matrix as a NumPy array.

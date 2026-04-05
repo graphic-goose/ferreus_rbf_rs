@@ -2,9 +2,9 @@
 //
 // Exposes the public API and high-level documentation for fast global RBF interpolation.
 //
-// Created on: 15 Nov 2025     Author: Daniel Owen 
+// Created on: 15 Nov 2025     Author: Daniel Owen
 //
-// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License. 
+// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License.
 //
 /////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -25,7 +25,7 @@
 //! Together, these methods reduce the overall complexity to **O(N log N)**,
 //! enabling efficient interpolation on datasets with millions of points in
 //! up to three dimensions.
-//! 
+//!
 //! Check out the examples directory in the repository for more examples of usage.
 //!
 //! # Features
@@ -42,9 +42,9 @@
 //! use ferreus_rbf::{
 //!     RBFInterpolator,
 //!     interpolant_config::{
-//!         InterpolantSettings, 
+//!         InterpolantSettings,
 //!         RBFKernelType,
-//!         FittingAccuracy, 
+//!         FittingAccuracy,
 //!         FittingAccuracyType
 //!     },
 //!     generate_random_points,
@@ -58,7 +58,7 @@
 //!
 //! // Assign some values to the source points using Franke's function
 //! let source_values = RBFTestFunctions::franke_2d(&source_points);
-//! 
+//!
 //! // Define an absolute fitting accuracy tolerance
 //! let fitting_accuracy = FittingAccuracy {
 //!     tolerance: 0.01,
@@ -72,10 +72,10 @@
 //!
 //! // Setup and solve the RBF
 //! let mut rbfi = RBFInterpolator::builder(source_points, source_values, interpolant_settings).build();
-//! 
+//!
 //! // Evaluate the RBF at the input source locations
 //! let fitted = rbfi.evaluate_at_source(true);
-//! 
+//!
 //! // Test that the interpolated values match the input source values to the requested tolerance.
 //! let max_diff: f64 = rbfi
 //!     .point_values
@@ -83,7 +83,7 @@
 //!     .iter()
 //!     .zip(fitted.col(0).iter())
 //!     .fold(0.0, |acc, (a, b)| acc.max((a - b).abs()));
-//! 
+//!
 //! assert!(max_diff < fitting_accuracy.tolerance)
 //! ```
 //!
@@ -129,14 +129,11 @@ mod rbf_test_functions;
 
 pub use {
     common::{
-        create_evaluation_grid, pad_and_snap_extents,
-        generate_random_points, point_arrays_to_csv, csv_to_point_arrays,
+        create_evaluation_grid, csv_to_point_arrays, generate_random_points, pad_and_snap_extents,
+        point_arrays_to_csv,
     },
     global_trend::GlobalTrend,
-    rbf::{
-        RBFInterpolator, RBFInterpolatorBuilder,
-        ModelIOError, Coefficients,
-    },
+    rbf::{Coefficients, ModelIOError, RBFInterpolator, RBFInterpolatorBuilder},
     rbf_test_functions::RBFTestFunctions,
     surfacing::surfacing_io::save_obj,
 };

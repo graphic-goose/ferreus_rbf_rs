@@ -2,9 +2,9 @@
 //
 // Implements the main RBF interpolator, coefficient management, and solver orchestration logic.
 //
-// Created on: 15 Nov 2025     Author: Daniel Owen 
+// Created on: 15 Nov 2025     Author: Daniel Owen
 //
-// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License. 
+// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License.
 //
 /////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -603,10 +603,12 @@ impl RBFInterpolator {
         tree: &mut FmmTree,
         target_points: &Mat<f64>,
         add_nugget: bool,
-    ) -> Mat<f64> {
+        evaluate_gradients: bool,
+    ) -> (Mat<f64>, Option<Mat<f64>>) {
         if let Err(err) = tree.evaluate(
             &self.coefficients.point_coefficients.as_mat_ref(),
             &target_points,
+            evaluate_gradients,
         ) {
             match err {
                 FmmError::PointOutsideTree { point_index } => {
@@ -616,10 +618,27 @@ impl RBFInterpolator {
                         point_index
                     );
                 }
+                FmmError::KernelDoesNotSupportGradients => {
+                    panic!(
+                        "FMM evaluation failed during RBF evaluation: \
+                         gradient evaluation was requested but the selected kernel \
+                         does not support gradients."
+                    );
+                }
             }
         }
 
         let mut interpolated_values = tree.target_values().clone();
+        let mut gradients = evaluate_gradients.then(|| tree.target_gradients().clone().unwrap());
+
+        if let (Some(gt), Some(grads)) = (&self.global_trend, gradients.as_mut()) {
+            apply_global_trend_to_gradients(
+                grads,
+                gt,
+                target_points.ncols(),
+                self.coefficients.point_coefficients.ncols(),
+            );
+        }
 
         if add_nugget {
             interpolated_values
@@ -639,9 +658,20 @@ impl RBFInterpolator {
 
             interpolated_values +=
                 monomials_mat * self.coefficients.poly_coefficients.as_ref().unwrap();
+
+            if let Some(grads) = gradients.as_mut() {
+                let poly_grads = evaluate_polynomial_gradients(
+                    target_points.as_ref(),
+                    self.coefficients.poly_coefficients.as_ref().unwrap(),
+                    &self.interpolant_settings.polynomial_degree,
+                    &self.translation_factor,
+                    &self.scale_factor,
+                );
+                *grads += poly_grads;
+            }
         }
 
-        interpolated_values
+        (interpolated_values, gradients)
     }
 
     /// Evaluate the interpolant at `target_points` using a **one-shot** FMM evaluator.
@@ -688,9 +718,58 @@ impl RBFInterpolator {
             false => target_points,
         };
 
-        let interpolated_values = self._evaluate(&mut tree, eval_points, false);
+        let (interpolated_values, _) = self._evaluate(&mut tree, eval_points, false, false);
 
         interpolated_values
+    }
+
+    /// Evaluate the interpolant and its gradient at `target_points` using a **one-shot** FMM evaluator.
+    ///
+    /// This is the most convenient way to evaluate a single batch: it builds a
+    /// temporary FMM tree, evaluates, and discards the evaluator. If a
+    /// `global_trend` is present, the target points are transformed for evaluation.
+    ///
+    /// Extents are computed as the **union** of the source and target point
+    /// bounding boxes to ensure all targets can be assigned to tree boxes.
+    ///
+    /// ### Returns
+    /// A `(n_targets × n_value_channels)` matrix of interpolated values.
+    ///
+    /// ### Accuracy & performance
+    /// For repeated evaluations (e.g. meshing, isosurfacing), prefer
+    /// [`RBFInterpolator::build_evaluator`] + [`RBFInterpolator::evaluate_targets`] to amortize setup cost.
+    ///
+    /// ### Example
+    /// ```no_run
+    /// # use ferreus_rbf::RBFInterpolator;
+    /// # use faer::Mat;
+    /// # let (rbfi, targets): (RBFInterpolator, Mat<f64>) = unimplemented!();
+    /// let (values, gradients) = rbfi.evaluate(&targets);
+    /// ```
+    pub fn evaluate_with_gradients(&self, target_points: &Mat<f64>) -> (Mat<f64>, Mat<f64>) {
+        let adaptive = true;
+        let sparse = false;
+
+        let source_extents = ferreus_rbf_utils::get_pointarray_extents(&self.points);
+        let target_extents = ferreus_rbf_utils::get_pointarray_extents(&target_points);
+
+        let combined_extents = union_extents(&source_extents, &target_extents);
+
+        let mut tree = self._setup_fmmtree(adaptive, sparse, Some(combined_extents));
+
+        tree.set_weights(&self.coefficients.point_coefficients.as_mat_ref());
+
+        let eval_points = match self.global_trend.is_some() {
+            true => {
+                let gt = self.global_trend.as_ref().unwrap();
+                &gt.transform_points(target_points)
+            }
+            false => target_points,
+        };
+
+        let (interpolated_values, gradients) = self._evaluate(&mut tree, eval_points, false, true);
+
+        (interpolated_values, gradients.unwrap())
     }
 
     /// Evaluate the interpolant **at the original source points**.
@@ -732,7 +811,7 @@ impl RBFInterpolator {
             false => &self.points,
         };
 
-        let interpolated_values = self._evaluate(&mut tree, tree_points, add_nugget);
+        let (interpolated_values, _) = self._evaluate(&mut tree, tree_points, add_nugget, false);
 
         interpolated_values
     }
@@ -803,6 +882,7 @@ impl RBFInterpolator {
         if let Err(err) = tree.evaluate_leaves(
             &self.coefficients.point_coefficients.as_mat_ref(),
             &eval_points,
+            false,
         ) {
             match err {
                 FmmError::PointOutsideTree { point_index } => {
@@ -812,6 +892,13 @@ impl RBFInterpolator {
                          Ensure the extents passed to build_evaluator(..) cover all \
                          target points.",
                         point_index
+                    );
+                }
+                FmmError::KernelDoesNotSupportGradients => {
+                    panic!(
+                        "FMM evaluation failed in evaluate_targets: \
+                         gradient evaluation was requested but the selected kernel \
+                         does not support gradients."
                     );
                 }
             }
@@ -833,6 +920,98 @@ impl RBFInterpolator {
         }
 
         interpolated_values
+    }
+
+    /// Evaluate the interpolant values and gradients using the **stored** evaluator built by [`RBFInterpolator::build_evaluator`].
+    ///
+    /// This is the fast path for repeated calls. If a `global_trend` is present,
+    /// target points are transformed consistently with the stored evaluator.
+    ///
+    /// ### Panics
+    /// - If called before [`RBFInterpolator::build_evaluator`].
+    /// - If any `target_points` lie **outside** the extents used to build the
+    ///   evaluator.
+    ///
+    /// ### Example
+    /// ```no_run
+    /// # use ferreus_rbf::RBFInterpolator;
+    /// # use faer::Mat;
+    /// # let (mut rbfi, targets): (RBFInterpolator, Mat<f64>) = unimplemented!();
+    /// rbfi.build_evaluator(None);
+    /// let (values, gradients) = rbfi.evaluate_targets(&targets);
+    /// ```
+    pub fn evaluate_targets_with_gradients(
+        &mut self,
+        target_points: &Mat<f64>,
+    ) -> (Mat<f64>, Mat<f64>) {
+        let tree = self.evaluator.as_mut().unwrap();
+
+        let mut eval_points = target_points.clone();
+
+        if let Some(gt) = &self.global_trend {
+            eval_points = gt.transform_points(&target_points);
+        }
+
+        if let Err(err) = tree.evaluate_leaves(
+            &self.coefficients.point_coefficients.as_mat_ref(),
+            &eval_points,
+            true,
+        ) {
+            match err {
+                FmmError::PointOutsideTree { point_index } => {
+                    panic!(
+                        "FMM evaluation failed in evaluate_targets: \
+                         target point at row {} lies outside the evaluator extents. \
+                         Ensure the extents passed to build_evaluator(..) cover all \
+                         target points.",
+                        point_index
+                    );
+                }
+                FmmError::KernelDoesNotSupportGradients => {
+                    panic!(
+                        "FMM evaluation failed in evaluate_targets: \
+                         gradient evaluation was requested but the selected kernel \
+                         does not support gradients."
+                    );
+                }
+            }
+        }
+
+        let mut interpolated_values = tree.target_values().cloned();
+        let mut gradients = tree.target_gradients().clone().unwrap();
+
+        if let Some(gt) = &self.global_trend {
+            apply_global_trend_to_gradients(
+                &mut gradients,
+                gt,
+                target_points.ncols(),
+                self.coefficients.point_coefficients.ncols(),
+            );
+        }
+
+        if self.interpolant_settings.basis_size != 0 {
+            let monomials_mat = polynomials::evaluate_monomials(
+                &target_points,
+                &self.interpolant_settings.polynomial_degree,
+                &self.interpolant_settings.basis_size,
+                &self.translation_factor,
+                &self.scale_factor,
+            );
+
+            interpolated_values +=
+                monomials_mat * self.coefficients.poly_coefficients.as_ref().unwrap();
+
+            let poly_grads = evaluate_polynomial_gradients(
+                target_points.as_ref(),
+                self.coefficients.poly_coefficients.as_ref().unwrap(),
+                &self.interpolant_settings.polynomial_degree,
+                &self.translation_factor,
+                &self.scale_factor,
+            );
+            gradients += poly_grads;
+        }
+
+        (interpolated_values, gradients)
     }
 
     /// Build isosurfaces using a **surface-following, non-adaptive Dual Contouring** pipeline.
@@ -858,7 +1037,7 @@ impl RBFInterpolator {
     ///
     /// ### Notes
     /// - Only implemented in 3D.
-    /// - The current isosurface extraction method does **not** guarantee 
+    /// - The current isosurface extraction method does **not** guarantee
     ///   manifold or valid meshes; surfaces may contain trifurcations or
     ///   self-intersections and may not be suitable for downstream boolean
     ///   operations.
@@ -987,6 +1166,88 @@ impl RBFInterpolator {
     }
 }
 
+fn apply_global_trend_to_gradients(
+    gradients: &mut Mat<f64>,
+    gt: &GlobalTrendTransform,
+    dims: usize,
+    nrhs: usize,
+) {
+    // x' = x * B + b  =>  ∇_x f = ∇_{x'} f * B^T (row-vector gradients).
+    let bt = gt.linear_part(dims).transpose().to_owned();
+
+    for i in 0..gradients.nrows() {
+        for rhs in 0..nrhs {
+            let base = rhs * dims;
+            let mut tmp = [0.0_f64; 3];
+            for d in 0..dims {
+                tmp[d] = gradients[(i, base + d)];
+            }
+
+            for k in 0..dims {
+                let mut acc = 0.0;
+                for j in 0..dims {
+                    acc += tmp[j] * bt[(j, k)];
+                }
+                gradients[(i, base + k)] = acc;
+            }
+        }
+    }
+}
+
+fn evaluate_polynomial_gradients(
+    points: MatRef<f64>,
+    poly_coefficients: &Mat<f64>,
+    degree: &i32,
+    translation_factor: &[f64],
+    scale_factor: &[f64],
+) -> Mat<f64> {
+    let (n, dims) = points.shape();
+    let nrhs = poly_coefficients.ncols();
+
+    let mut scaled_points = points.to_owned();
+    common::scale_points(&mut scaled_points, translation_factor, scale_factor);
+
+    let mut grads = Mat::<f64>::zeros(n, nrhs * dims);
+
+    if *degree >= 1 {
+        for rhs in 0..nrhs {
+            for d in 0..dims {
+                let coeff = poly_coefficients[(1 + d, rhs)] / scale_factor[d];
+                grads.col_mut(rhs * dims + d).fill(coeff);
+            }
+        }
+    }
+
+    if *degree == 2 {
+        let start = 1 + dims;
+        let mut k = 0usize;
+
+        for i_dim in 0..dims {
+            for j_dim in i_dim..dims {
+                for rhs in 0..nrhs {
+                    let c = poly_coefficients[(start + k, rhs)];
+                    for row in 0..n {
+                        let xi = scaled_points[(row, i_dim)];
+                        let xj = scaled_points[(row, j_dim)];
+
+                        if i_dim == j_dim {
+                            grads[(row, rhs * dims + i_dim)] +=
+                                c * (2.0 * xi / scale_factor[i_dim]);
+                        } else {
+                            grads[(row, rhs * dims + i_dim)] += c * (xj / scale_factor[i_dim]);
+                            grads[(row, rhs * dims + j_dim)] += c * (xi / scale_factor[j_dim]);
+                        }
+                    }
+                }
+
+                k += 1;
+            }
+        }
+    }
+
+    grads
+}
+
 fn get_center(points: &Mat<f64>) -> Row<f64> {
     points
         .col_iter()
@@ -1050,13 +1311,20 @@ pub(crate) fn fast_matrix_vector_product(
     let target_points =
         ferreus_rbf_utils::select_mat_rows(&fmm_tree.source_points(), &evaluation_indices);
 
-    if let Err(err) = fmm_tree.evaluate(&weights, &target_points) {
+    if let Err(err) = fmm_tree.evaluate(&weights, &target_points, false) {
         match err {
             FmmError::PointOutsideTree { point_index } => {
                 panic!(
                     "Internal FMM evaluation failed in fast_matrix_vector_product: \
                      source/target point at row {} lies outside the FMM tree extents.",
                     point_index
+                );
+            }
+            FmmError::KernelDoesNotSupportGradients => {
+                panic!(
+                    "Internal FMM evaluation failed in fast_matrix_vector_product: \
+                     gradient evaluation was requested but the selected kernel \
+                     does not support gradients."
                 );
             }
         }
@@ -1193,25 +1461,13 @@ type ModelIOResult<T> = std::result::Result<T, ModelIOError>;
 #[derive(Debug)]
 pub enum ModelIOError {
     /// Failed to create the target file before writing a model.
-    Create {
-        path: PathBuf,
-        source: io::Error,
-    },
+    Create { path: PathBuf, source: io::Error },
     /// Failed to open an existing model file for reading.
-    Open {
-        path: PathBuf,
-        source: io::Error,
-    },
+    Open { path: PathBuf, source: io::Error },
     /// Low-level write error while streaming the model to disk.
-    Write {
-        path: PathBuf,
-        source: io::Error,
-    },
+    Write { path: PathBuf, source: io::Error },
     /// Failed to flush buffered output when finishing a write.
-    Flush {
-        path: PathBuf,
-        source: io::Error,
-    },
+    Flush { path: PathBuf, source: io::Error },
     /// Error serializing the in-memory model to JSON.
     Serialize {
         path: PathBuf,

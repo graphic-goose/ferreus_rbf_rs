@@ -2,29 +2,29 @@
 //
 // Defines shared helpers for random point generation, extent padding, CSV I/O, and scaling utilities.
 //
-// Created on: 15 Nov 2025     Author: Daniel Owen 
+// Created on: 15 Nov 2025     Author: Daniel Owen
 //
-// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License. 
+// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License.
 //
 /////////////////////////////////////////////////////////////////////////////////////////////
 
-use ferreus_rbf_utils;
-use faer::{Mat, MatRef};
-use csv::{ReaderBuilder, Writer};
 use core::f64;
-use std::fs::File;
-use std::error::Error;
-use std::fmt::Debug;
+use csv::{ReaderBuilder, Writer};
+use faer::{Mat, MatRef};
+use ferreus_rbf_utils;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
+use std::error::Error;
+use std::fmt::Debug;
+use std::fs::File;
 
 /// Round a value down to the nearest multiple of resolution
-pub (crate) fn round_down(value: &f64, resolution: &f64) -> f64 {
+pub(crate) fn round_down(value: &f64, resolution: &f64) -> f64 {
     (value / resolution).floor() * resolution
 }
 
 /// Round a value up to the nearest multiple of resolution
-pub (crate) fn round_up(value: &f64, resolution: &f64) -> f64 {
+pub(crate) fn round_up(value: &f64, resolution: &f64) -> f64 {
     (value / resolution).ceil() * resolution
 }
 
@@ -70,7 +70,11 @@ pub fn generate_random_points(n: usize, d: usize, seed: Option<u64>) -> Mat<f64>
 ///
 /// # Returns
 /// A new `Vec<f64>` with padded and snapped extents
-pub fn pad_and_snap_extents(initial_extents: &Vec<f64>, resolution: &f64, buffer: &f64) -> Vec<f64> {
+pub fn pad_and_snap_extents(
+    initial_extents: &Vec<f64>,
+    resolution: &f64,
+    buffer: &f64,
+) -> Vec<f64> {
     let mut extents = initial_extents.clone();
     match extents.len() {
         4 => {
@@ -89,7 +93,10 @@ pub fn pad_and_snap_extents(initial_extents: &Vec<f64>, resolution: &f64, buffer
             extents[4] = round_up(&extents[4], &resolution) + resolution + buffer;
             extents[5] = round_up(&extents[5], &resolution) + resolution + buffer;
         }
-        _ => panic!("Expected extents of length 4 (2D) or 6 (3D), got {}", extents.len()),
+        _ => panic!(
+            "Expected extents of length 4 (2D) or 6 (3D), got {}",
+            extents.len()
+        ),
     }
 
     extents
@@ -103,10 +110,7 @@ pub fn pad_and_snap_extents(initial_extents: &Vec<f64>, resolution: &f64, buffer
 ///
 /// # Returns
 /// A `Mat<f64>` with one row per grid point and one column per dimension.
-pub fn create_evaluation_grid(
-    ranges: &[(f64, f64)],
-    counts: &[usize],
-) -> Mat<f64> {
+pub fn create_evaluation_grid(ranges: &[(f64, f64)], counts: &[usize]) -> Mat<f64> {
     assert_eq!(ranges.len(), counts.len());
 
     let dimensions = counts.to_vec();
@@ -182,7 +186,6 @@ pub fn csv_to_point_arrays(
     let points = MatRef::from_row_major_slice(data.as_slice(), num_rows, num_cols - 1).to_owned();
     let values = MatRef::from_row_major_slice(last_column.as_slice(), num_rows, 1).to_owned();
 
-    
     Ok((points, values))
 }
 
@@ -207,7 +210,11 @@ where
     T: std::fmt::Display + Debug + Clone + Send + Sync + PartialOrd + 'static,
 {
     let num_points = points.shape().0;
-    assert_eq!(num_points, values.shape().0,  "Points and values must have same length.");
+    assert_eq!(
+        num_points,
+        values.shape().0,
+        "Points and values must have same length."
+    );
 
     let mut wtr = Writer::from_path(filename)?;
 
@@ -236,8 +243,11 @@ where
 ///
 /// # Returns
 /// A vector of indices into `points` representing the sampled subset.
-pub fn farthest_point_sampling(points: &Mat<f64>, num_wanted_points: &usize, seed_index: &usize) -> Vec<usize>
-{
+pub fn farthest_point_sampling(
+    points: &Mat<f64>,
+    num_wanted_points: &usize,
+    seed_index: &usize,
+) -> Vec<usize> {
     let num_points = points.shape().0;
     let mut selected_points: Vec<usize> = Vec::with_capacity(*num_wanted_points);
     let mut is_selected = vec![false; num_points];
@@ -286,30 +296,25 @@ pub fn farthest_point_sampling(points: &Mat<f64>, num_wanted_points: &usize, see
 ///
 /// # Returns
 /// A tuple `(translation, scale)` where each is a per-dimension factor.
-pub fn get_cheb_cube_scaling_factors(point_locations: &Mat<f64>) -> (Vec<f64>, Vec<f64>) 
-{
+pub fn get_cheb_cube_scaling_factors(point_locations: &Mat<f64>) -> (Vec<f64>, Vec<f64>) {
     let dimensions = point_locations.shape().1;
     let extents = ferreus_rbf_utils::get_pointarray_extents(&point_locations);
 
     let mut translation_factor: Vec<f64> = Vec::with_capacity(dimensions);
     let mut scale_factor: Vec<f64> = Vec::with_capacity(dimensions);
 
-    (0..dimensions)
-        .into_iter()
-        .for_each(|d| {
-            let max_coord = extents[d + dimensions];
-            let min_coord = extents[d];
-            translation_factor.push((max_coord + min_coord) / 2.0);
-            scale_factor.push((max_coord - min_coord) / 2.0);
-        });
+    (0..dimensions).into_iter().for_each(|d| {
+        let max_coord = extents[d + dimensions];
+        let min_coord = extents[d];
+        translation_factor.push((max_coord + min_coord) / 2.0);
+        scale_factor.push((max_coord - min_coord) / 2.0);
+    });
 
-    scale_factor
-        .iter_mut()
-        .for_each(|element| {
-            if *element == 0.0 {
-                *element = 1.0;
-            }
-        });
+    scale_factor.iter_mut().for_each(|element| {
+        if *element == 0.0 {
+            *element = 1.0;
+        }
+    });
 
     (translation_factor, scale_factor)
 }
@@ -322,16 +327,10 @@ pub fn get_cheb_cube_scaling_factors(point_locations: &Mat<f64>) -> (Vec<f64>, V
 /// * `points` - Matrix of point coordinates to be transformed in-place.
 /// * `translation_factor` - Per-dimension translation factors.
 /// * `scale_factor` - Per-dimension scale factors.
-pub fn scale_points(points: &mut Mat<f64>, translation_factor: &Vec<f64>, scale_factor: &Vec<f64>) 
-{
-    points
-        .row_iter_mut()
-        .for_each(|row| {
-            row
-                .iter_mut()
-                .enumerate()
-                .for_each(|(col_idx, element)| {
-                    *element = (*element - translation_factor[col_idx]) / scale_factor[col_idx];
-                });
+pub fn scale_points(points: &mut Mat<f64>, translation_factor: &[f64], scale_factor: &[f64]) {
+    points.row_iter_mut().for_each(|row| {
+        row.iter_mut().enumerate().for_each(|(col_idx, element)| {
+            *element = (*element - translation_factor[col_idx]) / scale_factor[col_idx];
         });
+    });
 }

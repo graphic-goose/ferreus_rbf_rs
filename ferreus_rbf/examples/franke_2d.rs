@@ -17,8 +17,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let interpolant_settings = InterpolantSettings::builder(RBFKernelType::ThinPlateSpline).build();
 
     // Setup and solve the RBF
-    let rbfi = RBFInterpolator::builder(points, point_values, interpolant_settings)
-        .build();
+    let rbfi = RBFInterpolator::builder(points, point_values, interpolant_settings).build();
 
     // Build a 2D grid of target points in [0, 1]^2 to evaluate the RBF at
     let n = 50;

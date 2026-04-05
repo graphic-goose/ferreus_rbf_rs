@@ -2,35 +2,35 @@
 //
 // Defines global anisotropy and trend transforms for shaping RBF interpolation behaviour.
 //
-// Created on: 15 Nov 2025     Author: Daniel Owen 
+// Created on: 15 Nov 2025     Author: Daniel Owen
 //
-// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License. 
+// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License.
 //
 /////////////////////////////////////////////////////////////////////////////////////////////
 
-use faer::{concat, linalg::solvers::DenseSolveCore, mat, Mat, Row};
-use serde::{Serialize, Deserialize};
+use faer::{Mat, Row, concat, linalg::solvers::DenseSolveCore, mat};
+use serde::{Deserialize, Serialize};
 
 /// Defines an anisotropy transform for an RBF problem by specifying
 /// principal directions and scaling ratios.
-/// 
+///
 /// The variant to use depends on the dimensionality of the RBF problem:
-/// 
+///
 /// - [`GlobalTrend::One`] - for **1D problems**, with a single principal axis.
 /// - [`GlobalTrend::Two`] - for **2D problems**, with two axes lying in a plane,
 ///   oriented by a rotation angle.
 /// - [`GlobalTrend::Three`] - for **3D problems**, with a full orientation
 ///   defined by sequential rotations.
-/// 
+///
 /// Each variant encodes the relative scaling (ratios) along its principal axes,
 /// providing a compact way to represent anisotropy and directional stretching
 /// appropriate for the problem dimension.
-/// 
+///
 /// This is particularly useful when the input data shows a clear
 /// directional continuity or trend: by increasing the relative
 /// weighting along that direction, interpolation can better reflect
 /// the structure present in the data.
-/// 
+///
 /// **Note:** All angles are specified in **degrees**.
 #[derive(Clone, Copy, Debug)]
 pub enum GlobalTrend {
@@ -92,15 +92,15 @@ pub enum GlobalTrend {
     ///           +Z′
     ///           ^
     ///            \
-    ///             \       strike 
+    ///             \       strike
     ///              o — — — — — — — — —> -X′
     ///             /                  /
     ///            /                  /
     ///           /— — — — — — — — — /
-    ///       dipdir        \ pitch / 
+    ///       dipdir        \ pitch /
     ///         /            \     /  
     ///        v              \   /   
-    ///       +Y′— — — — — — — — — 
+    ///       +Y′— — — — — — — — —
     /// ```
     Three {
         /// Tilt angle in degrees from horizontal toward `dip_direction`.
@@ -211,7 +211,7 @@ impl GlobalTrendTransform {
                 let dipr = -dip.to_radians();
                 let dipdirr = -dip_direction.to_radians();
                 let pitchr = -pitch.to_radians();
-            
+
                 // Rotate about global Z so that local Y′ aligns
                 // with the dip direction.
                 let rot_z = mat![
@@ -251,7 +251,7 @@ impl GlobalTrendTransform {
                 let affine_transform = transform_back * scale * rotation * transform;
 
                 affine_transform.transpose().to_owned()
-            }    
+            }
         };
 
         let lu = &affine_transform.partial_piv_lu();
@@ -277,5 +277,11 @@ impl GlobalTrendTransform {
         let translated_back = homogenous_points * &self.inverse_transform;
 
         translated_back.subcols(0, points.ncols()).to_owned()
+    }
+
+    /// Returns the linear part `B` of the affine transform used by [`Self::transform_points`],
+    /// where a row-vector point transforms as `x' = x * B + b`.
+    pub fn linear_part(&self, dims: usize) -> Mat<f64> {
+        self.affine_transform.submatrix(0, 0, dims, dims).to_owned()
     }
 }

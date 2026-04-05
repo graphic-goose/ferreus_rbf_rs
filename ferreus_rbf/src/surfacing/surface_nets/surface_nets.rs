@@ -2,16 +2,13 @@
 //
 // Implements a surface-following Surface Nets algorithm for extracting isosurfaces from RBF fields.
 //
-// Created on: 15 Nov 2025     Author: Daniel Owen 
+// Created on: 15 Nov 2025     Author: Daniel Owen
 //
-// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License. 
+// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License.
 //
 /////////////////////////////////////////////////////////////////////////////////////////////
 
-use crate::{
-    progress::ProgressMsg,
-    rbf::RBFInterpolator,
-};
+use crate::{progress::ProgressMsg, rbf::RBFInterpolator};
 use faer::{Mat, Row, RowRef, row, stats};
 use std::collections::{HashMap, HashSet};
 
@@ -507,13 +504,8 @@ pub fn surface_nets(
             });
         }
 
-        let (cell_intersections, edge_intersections, evaluated_corners) = get_cell_intersections(
-            rbfi,
-            &resolution,
-            &min_corner,
-            &max_corner,
-            &isovalue,
-        );
+        let (cell_intersections, edge_intersections, evaluated_corners) =
+            get_cell_intersections(rbfi, &resolution, &min_corner, &max_corner, &isovalue);
 
         // Store normals per edge intersection
         let mut edge_normals: HashMap<((i32, i32, i32), (i32, i32, i32)), Row<f64>> =
@@ -536,7 +528,7 @@ pub fn surface_nets(
                         &min_corner,
                         resolution,
                     )
-                };                
+                };
 
                 for (idx, (edge_key, _axis)) in intersections.iter().enumerate() {
                     points
@@ -564,7 +556,7 @@ pub fn surface_nets(
                         None => {
                             edge_normals.insert(*edge_key, n.clone());
                         }
-                    }                    
+                    }
                 }
 
                 // pack normals
@@ -574,7 +566,11 @@ pub fn surface_nets(
                 }
 
                 let mut best_point = Row::<f64>::zeros(3);
-                stats::row_mean(best_point.as_mut(), points.as_ref(), stats::NanHandling::Ignore);
+                stats::row_mean(
+                    best_point.as_mut(),
+                    points.as_ref(),
+                    stats::NanHandling::Ignore,
+                );
                 (key.clone(), Row::from_iter(best_point.iter().cloned()))
             })
             .collect();

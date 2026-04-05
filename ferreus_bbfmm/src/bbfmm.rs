@@ -2,13 +2,14 @@
 //
 // Implements the core Black Box Fast Multipole Method (BBFMM) tree and evaluation routines.
 //
-// Created on: 15 Nov 2025     Author: Daniel Owen 
+// Created on: 15 Nov 2025     Author: Daniel Owen
 //
-// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License. 
+// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License.
 //
 /////////////////////////////////////////////////////////////////////////////////////////////
 
-use crate::{chebyshev, linear_tree, morton, utils, traits::KernelFunction};
+use crate::{chebyshev, linear_tree, morton, traits::KernelFunction, utils};
+use faer::mat::AsMatRef;
 use faer::{Mat, MatRef};
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
@@ -20,6 +21,9 @@ pub enum FmmError {
     /// A target point could not be assigned to any cell in the tree
     /// because it lies outside the tree extents.
     PointOutsideTree { point_index: usize },
+
+    /// Gradient evaluation was requested but the kernel does not provide a gradient implementation.
+    KernelDoesNotSupportGradients,
 }
 
 impl fmt::Display for FmmError {
@@ -29,6 +33,10 @@ impl fmt::Display for FmmError {
                 f,
                 "FMM evaluation failed: target point at row {} lies outside the tree extents",
                 point_index
+            ),
+            FmmError::KernelDoesNotSupportGradients => write!(
+                f,
+                "FMM evaluation failed: gradient evaluation requested but kernel does not support gradients"
             ),
         }
     }
@@ -55,7 +63,7 @@ pub enum M2LCompressionType {
     /// No compression is applied.
     None,
 
-    /// A truncated Singular Value Decompositio (SVD) is 
+    /// A truncated Singular Value Decompositio (SVD) is
     /// performed on the M2L operators.
     SVD,
 
@@ -183,8 +191,7 @@ pub struct PrecomputeOperators {
 ///
 /// The generic parameter `K` must implement [`KernelFunction`]
 #[derive(Debug)]
-pub struct FmmTree<K: KernelFunction>
-{
+pub struct FmmTree<K: KernelFunction> {
     /// Source point locations used to build the tree.
     ///
     /// Expected to be a [`faer::Mat<f64>`](https://docs.rs/faer/latest/faer/mat/type.Mat.html)
@@ -196,6 +203,14 @@ pub struct FmmTree<K: KernelFunction>
     /// Returns a [`faer::Mat<f64>`](https://docs.rs/faer/latest/faer/mat/type.Mat.html)
     /// with shape (N, K), where N is the number of target points and K is the number of right-hand-sides evaluated.
     pub target_values: Mat<f64>,
+
+    /// Optional gradients at target locations after calling an evaluation method with gradients enabled.
+    ///
+    /// When present, Returns a [`faer::Mat<f64>`](https://docs.rs/faer/latest/faer/mat/type.Mat.html)
+    /// with shape `(N, K * D)` where N is the number of target points, K is the number of right-hand-sides evaluated
+    /// and D is the dimensionality. 
+    /// Columns laid out as `[rhs0_dx, rhs0_dy, rhs0_dz, rhs1_dx, ...]`, truncated to the tree dimensionality.
+    pub target_gradients: Option<Mat<f64>>,
 
     /// Number of Chebyshev interpolation nodes per dimension.
     interpolation_order: usize,
@@ -253,14 +268,13 @@ pub struct FmmTree<K: KernelFunction>
     epsilon: f64,
 }
 
-impl<K: KernelFunction + Send + Sync> FmmTree<K>
-{
+impl<K: KernelFunction + Send + Sync> FmmTree<K> {
     /// Constructs a new [`FmmTree`] from the given source points and parameters.
     ///
     /// # Arguments
     /// * `source_points`: Input matrix of shape (N, D), where N is the number of points, D is the dimensionality.
     /// * `interpolation_order`: Number of Chebyshev nodes per dimension.
-    /// * `kernel_function`: Kernel function used for evaluating interactions. 
+    /// * `kernel_function`: Kernel function used for evaluating interactions.
     ///    Must implement [`KernelFunction`]
     /// * `adaptive_tree`: If 'true', uses adaptive subdivision of the tree.
     /// * `sparse`: If `true`, constructs a sparse tree that omits empty leaves.
@@ -329,6 +343,7 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K>
         let mut tree = Self {
             source_points,
             target_values: Mat::<f64>::new(),
+            target_gradients: None,
             interpolation_order,
             kernel,
             adaptive_tree,
@@ -357,22 +372,22 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K>
         self.tree_lists = linear_tree::build_tree(
             &self.source_points,
             &self.center,
-            &self.radius,
-            &self.max_points_per_cell,
-            &!self.sparse_tree,
+            self.radius,
+            self.max_points_per_cell,
+            !self.sparse_tree,
             &mut self.depth,
-            &self.dimensions,
-            &self.adaptive_tree,
+            self.dimensions,
+            self.adaptive_tree,
         );
 
         self.precompute_operators = chebyshev::precompute_approximation_operators(
-            &self.interpolation_order,
-            &(self.dimensions as usize),
-            &self.radius,
-            &self.depth,
+            self.interpolation_order,
+            self.dimensions as usize,
+            self.radius,
+            self.depth,
             &self.kernel,
             &self.compression_type,
-            &self.epsilon,
+            self.epsilon,
         );
     }
 
@@ -409,20 +424,23 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K>
     /// * `weights`: Matrix of shape (N, K), where N is the number of source points and K is the number of right-hand sides
     ///              to evaluate, containing source point weights (values)
     /// * `target points`: Matrix of shape (N, D), where N is the number of target points and D is the dimensionality.
+    /// * 'evaluate_gradients': Whether to evaluate gradients.
     pub fn evaluate(
         &mut self,
         weights: &MatRef<f64>,
         target_points: &Mat<f64>,
+        evaluate_gradients: bool,
     ) -> Result<(), FmmError> {
         self.reset_local_coefficients();
-        self.reset_target_values(&target_points.shape().0);
+        self.reset_targets(target_points.shape().0, evaluate_gradients);
+        self.check_kernel_supports_gradients(target_points, evaluate_gradients)?;
 
         let targets_to_keys = linear_tree::points_to_keys(
-            target_points,
+            target_points.as_mat_ref(),
             &self.tree_lists.leaves,
-            &self.depth,
+            self.depth,
             &self.center,
-            &self.radius,
+            self.radius,
             &self.dimensions,
         )?;
 
@@ -444,7 +462,7 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K>
 
         self.downward_pass(&weights, &cells_with_targets);
 
-        self.leaf_pass(&weights, &target_points);
+        self.leaf_pass(&weights, &target_points, evaluate_gradients);
 
         Ok(())
     }
@@ -471,26 +489,29 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K>
     /// * `weights`: Matrix of shape (N, K), where N is the number of source points and K is the number of right-hand sides
     ///              to evaluate, containing source point weights (values)
     /// * `target_points`: Matrix of shape (N, D), where N is the number of target points and D is the dimensionality.
+    /// * 'evaluate_gradients': Whether to evaluate gradients.
     pub fn evaluate_leaves(
         &mut self,
         weights: &MatRef<f64>,
         target_points: &Mat<f64>,
+        evaluate_gradients: bool,
     ) -> Result<(), FmmError> {
-        self.reset_target_values(&target_points.shape().0);
+        self.reset_targets(target_points.shape().0, evaluate_gradients);
+        self.check_kernel_supports_gradients(target_points, evaluate_gradients)?;
 
         let targets_to_keys = linear_tree::points_to_keys(
-            target_points,
+            target_points.as_mat_ref(),
             &self.tree_lists.leaves,
-            &self.depth,
+            self.depth,
             &self.center,
-            &self.radius,
+            self.radius,
             &self.dimensions,
         )?;
 
         self.tree_lists.leaf_target_indices =
             linear_tree::get_points_to_leaves_map(&targets_to_keys);
 
-        self.leaf_pass(&weights, &target_points);
+        self.leaf_pass(&weights, &target_points, evaluate_gradients);
 
         Ok(())
     }
@@ -511,9 +532,42 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K>
         );
     }
 
-    /// Resets the target values to zeros.
-    fn reset_target_values(&mut self, num_target_points: &usize) {
-        self.target_values = Mat::<f64>::zeros(*num_target_points, self.nrhs);
+    /// Resets the target values and gradients to zeros.
+    fn reset_targets(&mut self, num_target_points: usize, evaluate_gradients: bool) {
+        self.target_values = Mat::<f64>::zeros(num_target_points, self.nrhs);
+        self.target_gradients = match evaluate_gradients {
+            true => Some(Mat::<f64>::zeros(
+                num_target_points,
+                self.nrhs * (self.dimensions as usize),
+            )),
+            false => None,
+        };
+    }
+
+    fn check_kernel_supports_gradients(
+        &self,
+        target_points: &Mat<f64>,
+        evaluate_gradients: bool,
+    ) -> Result<(), FmmError> {
+        if evaluate_gradients == false {
+            return Ok(());
+        }
+
+        let dims = self.dimensions as usize;
+        let mut grad_buf = [0.0_f64; 3];
+        if self
+            .kernel
+            .evaluate_value_gradient(
+                target_points.row(0),
+                self.source_points.row(0),
+                &mut grad_buf[..dims],
+            )
+            .is_none()
+        {
+            return Err(FmmError::KernelDoesNotSupportGradients);
+        }
+
+        Ok(())
     }
 
     /// Performs the upward pass of the tree:
@@ -527,7 +581,7 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K>
 
         self.tree_lists.leaves.par_iter().for_each(|key| {
             if cells_with_sources.contains(&key) {
-                self.particle_to_multipole(&key, &multipole_coefficients_ref, &source_values);
+                self.particle_to_multipole(*key, &multipole_coefficients_ref, &source_values);
             }
         });
 
@@ -549,16 +603,16 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K>
     /// Maps source points to Chebyshev nodes in the cell.
     fn particle_to_multipole(
         &self,
-        key: &u64,
+        key: u64,
         multipole_coefficients_ref: &Mat<f64>,
         source_values: &MatRef<f64>,
     ) {
         let (center, length) =
-            morton::get_center_length(&key, &self.center, &self.radius, &self.dimensions);
+            morton::get_center_length(key, &self.center, self.radius, &self.dimensions);
 
         if let Some(cell_source_indices) = self.tree_lists.leaf_source_indices.get(&key) {
             let mut cell_point_locations =
-                utils::select_mat_rows(&self.source_points, &cell_source_indices);
+                utils::select_mat_rows(self.source_points.as_ref(), &cell_source_indices);
 
             let cell_source_values = Mat::<f64>::from_fn(
                 cell_source_indices.len(),
@@ -567,16 +621,18 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K>
             );
 
             let cell_multipole_transfer = chebyshev::get_approximation_coefficients(
-                &self.interpolation_order,
+                self.interpolation_order,
                 &mut cell_point_locations,
                 &center,
                 &length,
                 &self.precompute_operators.polynomial_nodes,
                 &(self.dimensions as usize),
+                false,
             );
 
             for j in 0..self.nrhs {
-                let coefficients = cell_source_values.col(j).transpose() * &cell_multipole_transfer;
+                let coefficients =
+                    cell_source_values.col(j).transpose() * &cell_multipole_transfer.values;
 
                 let column_index = self.tree_lists.key_to_index_map.get(&key).unwrap()
                     + j * self.tree_lists.tree.len();
@@ -649,8 +705,8 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K>
                     if let Some(v_list) = self.tree_lists.v_lists.get(&key) {
                         if v_list.len() > 0 {
                             self.multipole_to_local(
-                                &key,
-                                &level,
+                                *key,
+                                level,
                                 &v_list,
                                 &local_coefficients_ref,
                                 &cell_column_index,
@@ -662,9 +718,9 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K>
                         if let Some(x_list) = self.tree_lists.x_lists.as_ref().unwrap().get(&key) {
                             if x_list.len() > 0 {
                                 let (cell_center, cell_length) = morton::get_center_length(
-                                    &key,
+                                    *key,
                                     &self.center,
-                                    &self.radius,
+                                    self.radius,
                                     &self.dimensions,
                                 );
 
@@ -720,21 +776,21 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K>
     /// operations with a few matrix-matrix operations.
     fn multipole_to_local(
         &self,
-        key: &u64,
-        level: &u64,
+        key: u64,
+        level: u64,
         v_list: &HashSet<u64>,
         local_coefficients_ref: &Mat<f64>,
         cell_column_index: &usize,
     ) {
         let (cell_center, cell_length) =
-            morton::get_center_length(&key, &self.center, &self.radius, &self.dimensions);
+            morton::get_center_length(key, &self.center, self.radius, &self.dimensions);
 
         // Map the v-cells to the unique reference vectors required.
         let mut unique_reference_vectors: HashMap<usize, Vec<(u64, usize)>> = HashMap::new();
 
         v_list.iter().for_each(|v_cell| {
             let (v_center, _v_length) =
-                morton::get_center_length(&v_cell, &self.center, &self.radius, &self.dimensions);
+                morton::get_center_length(*v_cell, &self.center, self.radius, &self.dimensions);
 
             let vector_between_cells: Vec<i32> = cell_center
                 .iter()
@@ -790,7 +846,7 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K>
                     let u_lookup_values = self
                         .precompute_operators
                         .u
-                        .get(&(*level as usize))
+                        .get(&(level as usize))
                         .unwrap()
                         .get(&reference_cell)
                         .unwrap();
@@ -802,7 +858,7 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K>
                             let vt_lookup_values = self
                                 .precompute_operators
                                 .vt
-                                .get(&(*level as usize))
+                                .get(&(level as usize))
                                 .unwrap()
                                 .get(&reference_cell)
                                 .unwrap();
@@ -811,11 +867,11 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K>
                                 vt_lookup_values * permuted_multipole_coefficients.transpose();
                             permuted_local_coefficients =
                                 u_lookup_values * permuted_local_coefficients;
-                        },
+                        }
                         M2LCompressionType::None => {
                             permuted_local_coefficients =
                                 u_lookup_values * permuted_multipole_coefficients.transpose();
-                        },
+                        }
                     }
 
                     unsafe {
@@ -883,11 +939,7 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K>
                             .copy_from(self.source_points.row(*source_point));
                     });
 
-                let a_matrix = utils::get_a_matrix(
-                    cell_cheb_nodes,
-                    &x_cell_points,
-                    &self.kernel,
-                );
+                let a_matrix = utils::get_a_matrix(cell_cheb_nodes, &x_cell_points, &self.kernel);
 
                 for j in 0..self.nrhs {
                     let coefficients = &a_matrix * x_cell_values.col(j);
@@ -946,59 +998,89 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K>
         });
     }
 
-    /// Parallel loop through all leaf cells to evaluate targets
-    fn leaf_pass(&self, source_values: &MatRef<f64>, target_points: &Mat<f64>) {
+    /// Parallel loop through all leaf cells to evaluate targets.
+    fn leaf_pass(
+        &self,
+        source_values: &MatRef<f64>,
+        target_points: &Mat<f64>,
+        evaluate_gradients: bool,
+    ) {  
+        match evaluate_gradients {
+            false => {
+                self.leaf_pass_mode::<false>(source_values, target_points)
+            }
+            true => {
+                self.leaf_pass_mode::<true>(source_values, target_points)
+            }
+        }
+    }
+
+    fn leaf_pass_mode< const WITH_GRADS: bool>(
+        &self,
+        source_values: &MatRef<f64>,
+        target_points: &Mat<f64>,
+    ) {
         let target_values_ref = &self.target_values;
+        let target_gradients_ref = match WITH_GRADS {
+            true => Some(self.target_gradients.as_ref().unwrap().as_mat_ref()),
+            false => None,
+        };
 
         self.tree_lists
             .leaf_target_indices
             .par_iter()
             .for_each(|(leaf, leaf_target_indices)| {
-                if let Some(u_list) = self.tree_lists.u_lists.get(&leaf) {
-                    if u_list.len() > 0 {
-                        self.particle_to_particle(
-                            &u_list,
+                if let Some(u_list) = self.tree_lists.u_lists.get(leaf) {
+                    if !u_list.is_empty() {
+                        self.particle_to_particle::<WITH_GRADS>(
+                            u_list,
                             target_points,
-                            &leaf_target_indices,
-                            &target_values_ref,
-                            &source_values,
+                            leaf_target_indices,
+                            target_values_ref,
+                            target_gradients_ref,
+                            source_values,
                         );
                     }
                 }
 
                 if self.adaptive_tree {
-                    if let Some(w_list) = self.tree_lists.w_lists.as_ref().unwrap().get(&leaf) {
-                        if w_list.len() > 0 {
-                            self.multipole_to_particle(
-                                &w_list,
-                                &target_points,
-                                &leaf_target_indices,
-                                &target_values_ref,
+                    if let Some(w_list) = self.tree_lists.w_lists.as_ref().unwrap().get(leaf) {
+                        if !w_list.is_empty() {
+                            self.multipole_to_particle::<WITH_GRADS>(
+                                w_list,
+                                target_points,
+                                leaf_target_indices,
+                                target_values_ref,
+                                target_gradients_ref,
                             );
                         }
                     }
                 }
 
-                self.local_to_particle(
-                    &leaf,
-                    &leaf_target_indices,
-                    &target_points,
-                    &target_values_ref,
+                self.local_to_particle::<WITH_GRADS>(
+                    leaf,
+                    leaf_target_indices,
+                    target_points,
+                    target_values_ref,
+                    target_gradients_ref,
                 );
             });
     }
 
-    /// Direct interaction between particles of adjacent leaf cells
-    fn particle_to_particle(
+    /// Direct interaction between particles of adjacent leaf cells.
+    fn particle_to_particle<const WITH_GRADS: bool>(
         &self,
         u_list: &HashSet<u64>,
         target_points: &Mat<f64>,
-        cell_target_indices: &Vec<usize>,
+        cell_target_indices: &[usize],
         target_values_ref: &Mat<f64>,
+        target_gradients_ref: Option<MatRef<f64>>,
         source_values: &MatRef<f64>,
     ) {
+        let dims = target_points.ncols();
+
         u_list.iter().for_each(|u_cell| {
-            if let Some(u_cell_source_indices) = self.tree_lists.leaf_source_indices.get(&u_cell) {
+            if let Some(u_cell_source_indices) = self.tree_lists.leaf_source_indices.get(u_cell) {
                 let u_cell_values = Mat::<f64>::from_fn(
                     u_cell_source_indices.len(),
                     source_values.shape().1,
@@ -1006,53 +1088,100 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K>
                 );
 
                 let u_cell_points =
-                    utils::select_mat_rows(&self.source_points, &u_cell_source_indices);
+                    utils::select_mat_rows(self.source_points.as_ref(), u_cell_source_indices);
+                
+                for rhs in 0..self.nrhs {
+                    let rhs_vals = u_cell_values.col(rhs);
+                    let value_ptr = target_values_ref.col(rhs).as_ptr() as *mut f64;
 
-                cell_target_indices
-                    .chunks(self.eval_chunk_size)
-                    .for_each(|chunk_target_indices| {
-                        let chunk_target_points = utils::select_mat_rows(
-                            &target_points,
-                            &chunk_target_indices.to_vec(),
-                        );
+                    let (grad_col0_ptr, grad_col1_ptr, grad_col2_ptr) = if WITH_GRADS {
+                        let target_gradients_ref = target_gradients_ref
+                            .expect("ValuesAndGradients mode requires gradient storage");
+                        let grad_start_col = rhs * dims;
+                        let grad_1_col = grad_start_col + 1;
+                        let grad_2_col = grad_start_col + 2;
 
-                        let a_matrix = utils::get_a_matrix(
-                            &chunk_target_points,
-                            &u_cell_points,
-                            &self.kernel,
-                        );
+                        let grad_col0_ptr =
+                            target_gradients_ref.col(grad_start_col).as_ptr() as *mut f64;
 
-                        for j in 0..self.nrhs {
-                            let coefficients = &a_matrix * u_cell_values.col(j);
+                        let grad_col1_ptr = if dims > 1 {
+                            Some(target_gradients_ref.col(grad_1_col).as_ptr() as *mut f64)
+                        } else {
+                            None
+                        };
 
-                            unsafe {
-                                let target_values_ptr =
-                                    target_values_ref.col(j).as_ptr() as *mut f64;
+                        let grad_col2_ptr = if dims > 2 {
+                            Some(target_gradients_ref.col(grad_2_col).as_ptr() as *mut f64)
+                        } else {
+                            None
+                        };
 
-                                chunk_target_indices.into_iter().enumerate().for_each(
-                                    |(coeff_idx, target_idx)| {
-                                        *target_values_ptr.add(*target_idx) +=
-                                            coefficients[coeff_idx];
-                                    },
-                                );
+                        (grad_col0_ptr, grad_col1_ptr, grad_col2_ptr)
+                    } else {
+                        (std::ptr::null_mut(), None, None)
+                    };
+
+                    for &target_idx in cell_target_indices {
+                        let target = target_points.row(target_idx);
+
+                        for s in 0..u_cell_source_indices.len() as usize {
+                            let source = u_cell_points.row(s);
+                            let w = rhs_vals[s];
+
+                            if WITH_GRADS {
+                                let mut grad_buf = [0.0_f64; 3];
+                                let value = self
+                                    .kernel
+                                    .evaluate_value_gradient(
+                                        target,
+                                        source,
+                                        &mut grad_buf[..dims],
+                                    )
+                                    .expect("Kernel gradient support was pre-checked");
+
+                                unsafe {
+                                    *value_ptr.add(target_idx) += value * w;
+                                    *grad_col0_ptr.add(target_idx) += grad_buf[0] * w;
+                                    if let Some(ptr) = grad_col1_ptr {
+                                        *ptr.add(target_idx) += grad_buf[1] * w;
+                                    }
+                                    if let Some(ptr) = grad_col2_ptr {
+                                        *ptr.add(target_idx) += grad_buf[2] * w;
+                                    }
+                                }                                
+                            } else {
+                                let value = self
+                                    .kernel
+                                    .evaluate(
+                                        target,
+                                        source,
+                                    );
+
+                                unsafe {
+                                    *value_ptr.add(target_idx) += value * w;
+                                }
                             }
                         }
-                    });
+                    }
+                }                   
             }
         });
     }
 
-    /// Direct interaction between target particles and Chebyshev nodes of w-cells
-    fn multipole_to_particle(
+    /// Direct interaction between target particles and Chebyshev nodes of w-cells.
+    fn multipole_to_particle<const WITH_GRADS: bool>(
         &self,
         w_list: &HashSet<u64>,
         target_points: &Mat<f64>,
-        cell_target_indices: &Vec<usize>,
+        cell_target_indices: &[usize],
         target_values_ref: &Mat<f64>,
+        target_gradients_ref: Option<MatRef<f64>>,
     ) {
+        let dims = self.dimensions as usize;
+
         w_list.iter().for_each(|w_cell| {
             let (w_cell_center, w_cell_length) =
-                morton::get_center_length(&w_cell, &self.center, &self.radius, &self.dimensions);
+                morton::get_center_length(*w_cell, &self.center, self.radius, &self.dimensions);
 
             let scaled_cheb_nodes = chebyshev::scale_cheb_nodes_to_cell(
                 &self.precompute_operators.nodes_nd,
@@ -1060,88 +1189,169 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K>
                 &w_cell_length,
             );
 
-            let w_cell_column_index = self.tree_lists.key_to_index_map.get(&w_cell).unwrap();
+            let w_cell_column_index = self.tree_lists.key_to_index_map.get(w_cell).unwrap();
 
             cell_target_indices
                 .chunks(self.eval_chunk_size)
                 .for_each(|chunk_target_indices| {
-                    let chunk_target_points = utils::select_mat_rows(
-                        &target_points,
-                        &chunk_target_indices.to_vec(),
-                    );
-
-                    let a_matrix = utils::get_a_matrix(
-                        &chunk_target_points,
-                        &scaled_cheb_nodes,
-                        &self.kernel,
-                    );
-
-                    for j in 0..self.nrhs {
+                    for rhs in 0..self.nrhs {
                         let w_cell_multipoles_values = self
                             .multipole_coefficients
-                            .col(*w_cell_column_index + j * self.tree_lists.tree.len());
+                            .col(*w_cell_column_index + rhs * self.tree_lists.tree.len());
 
-                        let cell_target_values = &a_matrix * &w_cell_multipoles_values;
+                        let value_ptr = target_values_ref.col(rhs).as_ptr() as *mut f64;
 
-                        unsafe {
-                            let target_values_ptr = target_values_ref.col(j).as_ptr() as *mut f64;
+                        let (grad_col0_ptr, grad_col1_ptr, grad_col2_ptr) = if WITH_GRADS {
+                            let target_gradients_ref = target_gradients_ref
+                                .expect("ValuesAndGradients mode requires gradient storage");
+                            let grad_start_col = rhs * dims;
+                            let grad_1_col = grad_start_col + 1;
+                            let grad_2_col = grad_start_col + 2;
+                            let grad_col0_ptr =
+                                target_gradients_ref.col(grad_start_col).as_ptr() as *mut f64;
+                            let grad_col1_ptr = if dims > 1 {
+                                Some(target_gradients_ref.col(grad_1_col).as_ptr() as *mut f64)
+                            } else {
+                                None
+                            };
+                            let grad_col2_ptr = if dims > 2 {
+                                Some(target_gradients_ref.col(grad_2_col).as_ptr() as *mut f64)
+                            } else {
+                                None
+                            };
+                            (grad_col0_ptr, grad_col1_ptr, grad_col2_ptr)
+                        } else {
+                            (std::ptr::null_mut(), None, None)
+                        };
 
-                            chunk_target_indices.into_iter().enumerate().for_each(
-                                |(coeff_idx, target_idx)| {
-                                    *target_values_ptr.add(*target_idx) +=
-                                        cell_target_values[coeff_idx];
-                                },
-                            );
+                        for &target_idx in chunk_target_indices {
+                            let target = target_points.row(target_idx);
+
+                            for node_idx in 0..scaled_cheb_nodes.nrows() {
+                                let source = scaled_cheb_nodes.row(node_idx);
+                                let coeff = w_cell_multipoles_values[node_idx];
+
+                                if WITH_GRADS {
+                                    let mut grad_buf = [0.0_f64; 3];
+
+                                    let value = self
+                                        .kernel
+                                        .evaluate_value_gradient(
+                                            target,
+                                            source,
+                                            &mut grad_buf[..dims],
+                                        )
+                                        .expect("We shouldn't be here as Kernel gradient support was pre-checked");
+
+                                    unsafe {
+                                        *value_ptr.add(target_idx) += value * coeff;
+                                        *grad_col0_ptr.add(target_idx) += grad_buf[0] * coeff;
+                                        if let Some(ptr) = grad_col1_ptr {
+                                            *ptr.add(target_idx) += grad_buf[1] * coeff;
+                                        }
+                                        if let Some(ptr) = grad_col2_ptr {
+                                            *ptr.add(target_idx) += grad_buf[2] * coeff;
+                                        }
+                                    }
+                                } else {
+                                    let value = self
+                                        .kernel
+                                        .evaluate(
+                                            target,
+                                            source,
+                                        );
+
+                                    unsafe {
+                                        *value_ptr.add(target_idx) += value * coeff;
+                                    }
+                                }
+                            }
                         }
-                    }
+                    }                    
                 });
         });
     }
 
-    /// Maps the local coefficients of a cell to the targets in the cell
-    fn local_to_particle(
+    /// Maps the local coefficients of a cell to the targets in the cell.
+    fn local_to_particle<const WITH_GRADS: bool>(
         &self,
         leaf: &u64,
-        leaf_target_indices: &Vec<usize>,
+        leaf_target_indices: &[usize],
         target_points: &Mat<f64>,
         target_values_ref: &Mat<f64>,
+        target_gradients_ref: Option<MatRef<f64>>,
     ) {
+        let dims = self.dimensions as usize;
+        let ngrad_cols = self.interpolation_order.pow(dims as u32);
+
         leaf_target_indices
             .chunks(self.eval_chunk_size)
             .for_each(|chunk_target_indices| {
                 let mut point_locations_mat = Mat::<f64>::from_fn(
                     chunk_target_indices.len(),
                     target_points.shape().1,
-                    |i, j| target_points.get(chunk_target_indices[i], j).clone(),
+                    |i, j| *target_points.get(chunk_target_indices[i], j),
                 );
 
                 let (cell_center, cell_length) =
-                    morton::get_center_length(&leaf, &self.center, &self.radius, &self.dimensions);
+                    morton::get_center_length(*leaf, &self.center, self.radius, &self.dimensions);
 
                 let cell_local_transfer = chebyshev::get_approximation_coefficients(
-                    &self.interpolation_order,
+                    self.interpolation_order,
                     &mut point_locations_mat,
                     &cell_center,
                     &cell_length,
                     &self.precompute_operators.polynomial_nodes,
                     &(self.dimensions as usize),
+                    WITH_GRADS,
                 );
 
+                let grads = if WITH_GRADS {
+                    Some(
+                        cell_local_transfer
+                            .gradients
+                            .as_ref()
+                            .expect("ValuesAndGradients mode requires gradient coefficients"),
+                    )
+                } else {
+                    None
+                };
+
                 for j in 0..self.nrhs {
-                    let cell_column_index = self.tree_lists.key_to_index_map.get(&leaf).unwrap()
+                    let cell_column_index = self.tree_lists.key_to_index_map.get(leaf).unwrap()
                         + j * self.tree_lists.tree.len();
                     let local_coefficients = self.local_coefficients.col(cell_column_index);
-                    let local_target_values = &cell_local_transfer * &local_coefficients;
+                    let local_target_values = &cell_local_transfer.values * &local_coefficients;
 
                     unsafe {
-                        let target_values_ptr = target_values_ref.col(j).as_ptr() as *mut f64;
-
-                        chunk_target_indices.into_iter().enumerate().for_each(
+                        let value_ptr = target_values_ref.col(j).as_ptr() as *mut f64;
+                        chunk_target_indices.iter().enumerate().for_each(
                             |(coeff_idx, target_idx)| {
-                                *target_values_ptr.add(*target_idx) +=
-                                    local_target_values[coeff_idx];
+                                *value_ptr.add(*target_idx) += local_target_values[coeff_idx];
                             },
                         );
+                    }
+
+                    if WITH_GRADS {
+                        let grads = grads.expect("ValuesAndGradients mode requires gradients");
+                        let target_gradients_ref = target_gradients_ref
+                            .expect("ValuesAndGradients mode requires gradient storage");
+
+                        for d in 0..dims {
+                            let col_start = ngrad_cols * d;
+                            let local_grads = grads.subcols(col_start, ngrad_cols);
+                            let local_target_grad = &local_grads * &local_coefficients;
+                            let col = j * dims + d;
+
+                            unsafe {
+                                let grad_ptr = target_gradients_ref.col(col).as_ptr() as *mut f64;
+                                chunk_target_indices.iter().enumerate().for_each(
+                                    |(coeff_idx, target_idx)| {
+                                        *grad_ptr.add(*target_idx) += local_target_grad[coeff_idx];
+                                    },
+                                );
+                            }
+                        }
                     }
                 }
             });
@@ -1197,7 +1407,7 @@ mod tests {
         // Two targets: one inside extents, one clearly outside.
         let target_points = mat![[0.5], [10.0]];
 
-        let result = tree.evaluate(&weights.as_ref(), &target_points);
+        let result = tree.evaluate(&weights.as_ref(), &target_points, false);
 
         match result {
             Err(FmmError::PointOutsideTree { point_index }) => {

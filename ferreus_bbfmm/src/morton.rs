@@ -2,9 +2,9 @@
 //
 // Implements Morton (Z-order) encoding, decoding, and neighbourhood queries for FMM trees.
 //
-// Created on: 15 Nov 2025     Author: Daniel Owen 
+// Created on: 15 Nov 2025     Author: Daniel Owen
 //
-// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License. 
+// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License.
 //
 /////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -26,7 +26,7 @@ use crate::morton_constants::{
 /// - [`Libmorton`](https://github.com/Forceflow/libmorton)
 
 /// Gets the side length of a cell for the current level.
-pub fn get_side_length(radius: &f64, level: &u64) -> f64 {
+pub fn get_side_length(radius: f64, level: u64) -> f64 {
     let side_length = 2.0 * radius / ((1 << level) as f64);
     side_length
 }
@@ -211,7 +211,7 @@ pub fn get_ancestors(key: &u64, dimensions: &Dimensions) -> HashSet<u64> {
 
 /// Gets the Morton keys for all potential neighbours of a cell at the same level.
 /// Can include cells that are outside the tree extents.
-pub fn get_neighbours(key: &u64, dimensions: &Dimensions) -> Vec<u64> {
+pub fn get_neighbours(key: u64, dimensions: &Dimensions) -> Vec<u64> {
     let level = get_level(&key);
     let max_num_boxes = 1 << level;
     let anchor = decode_key(&key, dimensions);
@@ -306,15 +306,15 @@ pub fn get_child_index(child: &u64, dimensions: &Dimensions) -> usize {
 
 // Tests whether two cells in the tree are adjacent.
 pub fn are_adjacent(
-    cell_a: &u64,
-    cell_b: &u64,
+    cell_a: u64,
+    cell_b: u64,
     tree_center: &Vec<f64>,
-    tree_radius: &f64,
+    tree_radius: f64,
     dimensions: &Dimensions,
 ) -> bool {
     let tolerance = 1e-6;
-    let (center_a, length_a) = get_center_length(&cell_a, &tree_center, &tree_radius, &dimensions);
-    let (center_b, length_b) = get_center_length(&cell_b, &tree_center, &tree_radius, &dimensions);
+    let (center_a, length_a) = get_center_length(cell_a, &tree_center, tree_radius, &dimensions);
+    let (center_b, length_b) = get_center_length(cell_b, &tree_center, tree_radius, &dimensions);
 
     let length = 0.5 * (length_a + length_b);
 
@@ -326,15 +326,15 @@ pub fn are_adjacent(
 
 // Gets the center and radius of the cell, given a Morton key and tree center and radius.
 pub fn get_center_length(
-    key: &u64,
+    key: u64,
     tree_center: &Vec<f64>,
-    tree_radius: &f64,
+    tree_radius: f64,
     dimensions: &Dimensions,
 ) -> (Vec<f64>, f64) {
     let mut anchor = decode_key(&key, &dimensions);
     let level = anchor.pop().unwrap();
-    let side_length = get_side_length(&tree_radius, &level);
-    let displacement: Vec<f64> = tree_center.iter().map(|&c| c - *tree_radius).collect();
+    let side_length = get_side_length(tree_radius, level);
+    let displacement: Vec<f64> = tree_center.iter().map(|&c| c - tree_radius).collect();
 
     let cell_center: Vec<f64> = anchor
         .iter()

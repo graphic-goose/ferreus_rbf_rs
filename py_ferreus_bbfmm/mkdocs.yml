@@ -103,6 +103,7 @@ nav:
   - Home: index.md
   - Examples:
       - Matrix-vector product: examples/matrix_vector_product.md
+      - Matrix-vector project with gradients: examples/matrix_vector_product_with_gradients.md
       - RBF evaluator: examples/rbf_evaluator.md
   - API:
       - Overview: api/index.md

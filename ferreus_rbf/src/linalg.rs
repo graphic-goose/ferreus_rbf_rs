@@ -2,9 +2,9 @@
 //
 // Adds helper linear algebra routines, including RFP-based Cholesky factorisation and solves.
 //
-// Created on: 15 Nov 2025     Author: Daniel Owen 
+// Created on: 15 Nov 2025     Author: Daniel Owen
 //
-// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License. 
+// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License.
 //
 /////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -30,7 +30,7 @@ use faer_traits::{ComplexField, Conjugate, math_utils::one};
 
 #[derive(Debug)]
 pub enum FactorizationError {
-    NotSpd,       // LLT failed (matrix not SPD or numerically indefinite)
+    NotSpd, // LLT failed (matrix not SPD or numerically indefinite)
 }
 
 #[allow(non_snake_case)]
@@ -207,7 +207,8 @@ fn factor_subblock<T: ComplexField>(
         false => llt.copy_from_triangular_lower(AR.submatrix(sub.0, sub.1, sub.2, sub.3)),
     };
 
-    llt::factor::cholesky_in_place(llt.rb_mut(), default(), par, stack, default()).map_err(|_| FactorizationError::NotSpd)?;
+    llt::factor::cholesky_in_place(llt.rb_mut(), default(), par, stack, default())
+        .map_err(|_| FactorizationError::NotSpd)?;
 
     match trans_block {
         true => AR

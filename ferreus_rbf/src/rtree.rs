@@ -2,9 +2,9 @@
 //
 // Wraps the `rstar` crate to build spatial R-trees for domain decomposition neighbourhood queries.
 //
-// Created on: 15 Nov 2025     Author: Daniel Owen 
+// Created on: 15 Nov 2025     Author: Daniel Owen
 //
-// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License. 
+// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License.
 //
 /////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -16,7 +16,7 @@
 //! querying of neighbouring/intersecting rectangles.
 
 use rstar::primitives::{GeomWithData, Rectangle};
-use rstar::{RTree, AABB};
+use rstar::{AABB, RTree};
 use std::convert::TryInto;
 
 // rstar doesn't support 1D natively, so we've worked around
@@ -69,9 +69,7 @@ fn rectangle_from_extents_1d_as2d(extents: &[f64]) -> Rectangle<[f64; 2]> {
 type IndexedRect<const D: usize> = GeomWithData<Rectangle<[f64; D]>, usize>;
 
 /// Build up an RTree of IndexedRect<D> so that each leaf knows its domain‐index.
-fn bulk_load_indexed_nd<const D: usize>(
-    items: Vec<IndexedRect<D>>,
-) -> RTree<IndexedRect<D>> {
+fn bulk_load_indexed_nd<const D: usize>(items: Vec<IndexedRect<D>>) -> RTree<IndexedRect<D>> {
     RTree::bulk_load(items)
 }
 
@@ -90,11 +88,7 @@ fn find_neighbours<const D: usize>(
         .collect()
 }
 
-fn find_neighbours_1d_as2d(
-    tree: &RTree<Rect1As2>,
-    domain_extents: &[f64],
-    i: usize,
-) -> Vec<usize> {
+fn find_neighbours_1d_as2d(tree: &RTree<Rect1As2>, domain_extents: &[f64], i: usize) -> Vec<usize> {
     debug_assert_eq!(domain_extents.len(), 2); // [min_x, max_x]
     let envelope = AABB::from_corners([domain_extents[0], 0.0], [domain_extents[1], 1.0]);
     tree.locate_in_envelope_intersecting(&envelope)

@@ -2,16 +2,16 @@
 //
 // Provides benchmark test functions for validating and demonstrating RBF interpolation quality.
 //
-// Created on: 15 Nov 2025     Author: Daniel Owen 
+// Created on: 15 Nov 2025     Author: Daniel Owen
 //
-// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License. 
+// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License.
 //
 /////////////////////////////////////////////////////////////////////////////////////////////
 
 //! 3D test functions f1_3d - f8_3d are implemented from [1].
 //!
 //! # References
-//! 1. Bozzini, Mira & Rossini, Milvia. (2002). Testing methods for 3D scattered data 
+//! 1. Bozzini, Mira & Rossini, Milvia. (2002). Testing methods for 3D scattered data
 //!    interpolation. 20. 111-135.
 use faer::Mat;
 
@@ -24,7 +24,7 @@ impl RBFTestFunctions {
     /// <div>
     /// $$
     /// \begin{aligned}
-    /// F(x,y) &= 
+    /// F(x,y) &=
     /// \tfrac{3}{4}\exp\!\left[
     ///     -\frac{(9x-2)^2 + (9y-2)^2}{4}
     /// \right] \\[6pt]
@@ -78,10 +78,10 @@ impl RBFTestFunctions {
 
     /// 3D Franke-like test function:
     ///
-    /// <div> 
+    /// <div>
     /// $$
     /// \begin{aligned}
-    /// F(x,y,z) &= 
+    /// F(x,y,z) &=
     /// \tfrac{3}{4}\exp\!\left[
     ///     -\frac{(9x-2)^2 + (9y-2)^2 + (9z-2)^2}{4}
     /// \right] \\[6pt]
@@ -143,7 +143,7 @@ impl RBFTestFunctions {
 
     /// <div>
     /// $$
-    /// F(x,y,z) = 
+    /// F(x,y,z) =
     /// \frac{
     ///     \tanh(9z - 9x - 9y) + 1
     /// }{
@@ -296,15 +296,16 @@ impl RBFTestFunctions {
             let y = points[(i, 1)];
             let z = points[(i, 2)];
 
-            1.0 / (1.0 + 2.0 * (-3.0 * ((x.powi(2) + y.powi(2) + z.powi(2)).sqrt() - 6.7)).exp()).sqrt()
+            1.0 / (1.0 + 2.0 * (-3.0 * ((x.powi(2) + y.powi(2) + z.powi(2)).sqrt() - 6.7)).exp())
+                .sqrt()
         })
     }
     /// Peak function (independent of ``z``):
-    /// 
+    ///
     /// <div>
     /// $$
     /// \begin{aligned}
-    /// F(x,y,z) &= 
+    /// F(x,y,z) &=
     /// 50\,\exp\!\left[
     ///     -200\bigl((x-0.3)^2 + (y-0.3)^2\bigr)
     /// \right] \\[6pt]

@@ -6,3 +6,8 @@ members = [
     "py_ferreus_rbf",
     "py_ferreus_bbfmm",
 ]
+
+[patch.crates-io]
+ferreus_bbfmm = { path = "ferreus_bbfmm" }
+ferreus_rbf_utils = { path = "ferreus_rbf_utils" }
+ferreus_rbf = { path = "ferreus_rbf" }

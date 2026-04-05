@@ -2,14 +2,14 @@
 //
 // Provides utility routines for bounding box computation, row selection, and dense kernel matrices.
 //
-// Created on: 15 Nov 2025     Author: Daniel Owen 
+// Created on: 15 Nov 2025     Author: Daniel Owen
 //
-// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License. 
+// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License.
 //
 /////////////////////////////////////////////////////////////////////////////////////////////
 
-use faer::Mat;
 use crate::KernelFunction;
+use faer::{Mat, MatRef};
 
 /// Computes the axis aligned bounding box (AABB) extents of a matrix of points.
 ///
@@ -32,7 +32,7 @@ where
 
     // Initialize the mins and maxs
     for col in 0..ncols {
-        extents[col] = points.get(0, col).clone();               // Min value for each column
+        extents[col] = points.get(0, col).clone(); // Min value for each column
         extents[col + ncols] = points.get(0, col).clone(); // Max value for each column
     }
 
@@ -53,10 +53,8 @@ where
     extents
 }
 
-
 #[inline(always)]
-pub fn select_mat_rows(existing_mat: &Mat<f64>, row_indices: &Vec<usize>) -> Mat<f64> 
-{
+pub fn select_mat_rows(existing_mat: MatRef<f64>, row_indices: &[usize]) -> Mat<f64> {
     Mat::from_fn(row_indices.len(), existing_mat.ncols(), |i, j| {
         existing_mat.get(row_indices[i], j).clone()
     })
@@ -97,7 +95,7 @@ pub fn get_a_matrix_subset<K>(
     rows_start: &usize,
     rows_end: &usize,
     columns_start: &usize,
-    columns_end: &usize,    
+    columns_end: &usize,
 ) -> Mat<f64>
 where
     K: KernelFunction,
@@ -139,6 +137,10 @@ where
 #[inline(always)]
 pub fn argsort<T: PartialOrd>(data: &[T]) -> Vec<usize> {
     let mut indices = (0..data.len()).collect::<Vec<_>>();
-    indices.sort_by(|&i, &j| data[i].partial_cmp(&data[j]).unwrap_or(std::cmp::Ordering::Equal));
+    indices.sort_by(|&i, &j| {
+        data[i]
+            .partial_cmp(&data[j])
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     indices
 }

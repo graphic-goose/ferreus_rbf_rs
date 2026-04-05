@@ -2,20 +2,20 @@
 //
 // Implements overlapping domain structures and local solvers for the domain decomposition preconditioner.
 //
-// Created on: 15 Nov 2025     Author: Daniel Owen 
+// Created on: 15 Nov 2025     Author: Daniel Owen
 //
-// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License. 
+// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License.
 //
 /////////////////////////////////////////////////////////////////////////////////////////////
 
 //! # domain
-//! 
+//!
 //! Defines one overlapping subproblem within a Domain Decomposition Method (DDM) for
 //! radial basis function (RBF) interpolation and preconditioning. A `Domain` is built
 //! from a subset of the global node set, maintains the bookkeeping required to
 //! assemble and factorise its local system, and provides a solver that maps the local
 //! right-hand side to RBF (and optional polynomial) coefficients.
-//! 
+//!
 //! # References
 //! 1.  R. K. Beatson, W. A. Light, and S. Billings. Fast solution of the radial basis
 //!     function interpolation equations: domain decomposition methods. SIAM J. Sci.
@@ -28,20 +28,20 @@ use std::sync::Arc;
 
 use crate::{
     common,
+    global_trend::GlobalTrendTransform,
     interpolant_config::InterpolantSettings,
-    linalg::{LltRfp, Lblt},
+    linalg::{Lblt, LltRfp},
     polynomials,
     rbf::Coefficients,
-    global_trend::GlobalTrendTransform,
 };
 
 use faer::{
+    Accum, Mat, MatRef, Par, Side,
     linalg::{
         matmul,
         solvers::{PartialPivLu, Solve},
     },
     reborrow::*,
-    Accum, Mat, MatRef, Par, Side,
 };
 
 use ferreus_rbf_utils;
@@ -63,7 +63,7 @@ impl DomainSolver {
     pub fn new(a: MatRef<'_, f64>, side: Side) -> Self {
         match LltRfp::<f64>::try_new(a, side) {
             Ok(llt) => DomainSolver::Llt(llt),
-            Err(_)  => DomainSolver::Lblt(Lblt::<f64>::new(a, side)),
+            Err(_) => DomainSolver::Lblt(Lblt::<f64>::new(a, side)),
         }
     }
 
@@ -82,7 +82,6 @@ impl DomainSolver {
     //     }
     // }
 }
-
 
 /// Represents a single domain in the domain decomposition method (DDM).
 pub struct Domain {
@@ -135,7 +134,7 @@ impl Domain {
 
     /// Factorises the system matrix for this domain.
     ///
-    /// This routine builds the local interpolation system `A` and computes 
+    /// This routine builds the local interpolation system `A` and computes
     /// its factorisation.  
     ///
     /// If a polynomial basis is included, we follow Beatson’s `Q` formulation
@@ -156,9 +155,8 @@ impl Domain {
         source_points: &Mat<f64>,
         interpolant_settings: Arc<InterpolantSettings>,
         solve_for_poly: bool,
-        global_trend: &Option<GlobalTrendTransform>
-    ) 
-    {
+        global_trend: &Option<GlobalTrendTransform>,
+    ) {
         let mut lhs: Mat<f64>;
         let domain_points =
             ferreus_rbf_utils::select_mat_rows(&source_points, &self.overlapping_point_indices);
@@ -172,8 +170,8 @@ impl Domain {
                 true => {
                     let gt = global_trend.as_ref().unwrap();
                     gt.inverse_transform_points(&domain_points)
-                },
-                false => domain_points.clone()
+                }
+                false => domain_points.clone(),
             };
 
             // Evaluate all candidate monomials.
@@ -243,8 +241,10 @@ impl Domain {
                 })
                 .collect();
 
-            let non_special_point_monomials =
-                ferreus_rbf_utils::select_mat_rows(&full_rank_monomials, &non_special_point_indices);
+            let non_special_point_monomials = ferreus_rbf_utils::select_mat_rows(
+                &full_rank_monomials,
+                &non_special_point_indices,
+            );
 
             let global_special_point_indices: Vec<usize> = special_point_indices
                 .iter()
@@ -398,9 +398,10 @@ impl Domain {
         let num_rhs = source_values.ncols();
 
         // Gather rhs values for this domain.
-        let domain_values = Mat::<f64>::from_fn(self.overlapping_point_indices.len(), num_rhs, |i, j| {
-            *source_values.get(self.overlapping_point_indices[i], j)
-        });
+        let domain_values =
+            Mat::<f64>::from_fn(self.overlapping_point_indices.len(), num_rhs, |i, j| {
+                *source_values.get(self.overlapping_point_indices[i], j)
+            });
 
         if self.q_matrix_top.is_some() {
             // Polynomial case.
@@ -444,9 +445,10 @@ impl Domain {
 
         // Recover polynomial coefficients if requested.
         if self.solve_for_poly {
-            let d_special_point_values = Mat::<f64>::from_fn(num_special_points, num_rhs, |i, j| {
-                *source_values.get(self.overlapping_point_indices[i], j)
-            });
+            let d_special_point_values =
+                Mat::<f64>::from_fn(num_special_points, num_rhs, |i, j| {
+                    *source_values.get(self.overlapping_point_indices[i], j)
+                });
 
             // Find the polynomial from P_{k-1} interpolating to the following
             // residual function at the special points:
@@ -465,20 +467,16 @@ impl Domain {
     }
 }
 
-
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
-        common,
+        RBFTestFunctions, common,
         interpolant_config::{InterpolantSettings, RBFKernelType},
         polynomials,
-        RBFTestFunctions,
     };
     use equator::assert;
-    use faer::{concat, utils::approx::*, Mat};
+    use faer::{Mat, concat, utils::approx::*};
     use ferreus_rbf_utils::{self};
 
     fn generate_2d_points(num_points: usize) -> (Mat<f64>, Mat<f64>) {
@@ -497,8 +495,7 @@ mod tests {
         source_points: &Mat<f64>,
         source_values: &Mat<f64>,
         interpolant_settings: Arc<InterpolantSettings>,
-    ) -> Coefficients 
-    {
+    ) -> Coefficients {
         let lhs: Mat<f64>;
         let rhs: Mat<f64>;
         let point_coefficients: Mat<f64>;
@@ -556,8 +553,7 @@ mod tests {
         target_points: &Mat<f64>,
         interpolant_settings: Arc<InterpolantSettings>,
         coefficients: &Coefficients,
-    ) -> Mat<f64> 
-    {
+    ) -> Mat<f64> {
         let eval_a_matrix = ferreus_rbf_utils::get_a_matrix(
             target_points,
             source_points,
@@ -618,8 +614,7 @@ mod tests {
         points: &Mat<f64>,
         values: &Mat<f64>,
         interpolant_settings: Arc<InterpolantSettings>,
-    ) -> Coefficients 
-    {
+    ) -> Coefficients {
         let num_points = points.nrows();
         let point_indices = generate_point_indices(num_points);
 
@@ -654,8 +649,11 @@ mod tests {
         )
     }
 
-    fn test_domain_solver(points: &Mat<f64>, values: &Mat<f64>, interpolant_settings: InterpolantSettings) 
-    {
+    fn test_domain_solver(
+        points: &Mat<f64>,
+        values: &Mat<f64>,
+        interpolant_settings: InterpolantSettings,
+    ) {
         let interpolant_settings = Arc::new({
             let mut ks = interpolant_settings;
             ks.set_basis_size(&points.ncols());
@@ -706,7 +704,8 @@ mod tests {
 
         let (points, values) = generate_2d_points(num_points);
 
-        let interpolant_settings = InterpolantSettings::builder(RBFKernelType::ThinPlateSpline).build();
+        let interpolant_settings =
+            InterpolantSettings::builder(RBFKernelType::ThinPlateSpline).build();
 
         test_domain_solver(&points, &values, interpolant_settings);
     }
@@ -731,7 +730,8 @@ mod tests {
 
         let (points, values) = generate_2d_points(num_points);
 
-        let interpolant_settings = InterpolantSettings::builder(RBFKernelType::ThinPlateSpline).build();
+        let interpolant_settings =
+            InterpolantSettings::builder(RBFKernelType::ThinPlateSpline).build();
 
         let interpolant_settings = Arc::new({
             let mut ks = interpolant_settings;

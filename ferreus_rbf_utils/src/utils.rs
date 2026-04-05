@@ -226,6 +226,38 @@ where
     extents
 }
 
+#[inline(always)]
+pub(crate) fn distance_sq(target: RowRef<f64>, source: RowRef<f64>) -> f64 {
+    let mut dist = 0.0;
+    for (t, s) in target.iter().zip(source.iter()) {
+        let diff = t - s;
+        dist += diff * diff;
+    }
+    dist
+}
+
+#[inline(always)]
+pub(crate) fn fill_diff_and_distance_sq(
+    target: RowRef<f64>,
+    source: RowRef<f64>,
+    diff_out: &mut [f64],
+) -> f64 {
+    let mut dist = 0.0;
+    for (d, (t, s)) in diff_out.iter_mut().zip(target.iter().zip(source.iter())) {
+        let diff = t - s;
+        *d = diff;
+        dist += diff * diff;
+    }
+    dist
+}
+
+#[inline(always)]
+pub(crate) fn scale_in_place(values: &mut [f64], factor: f64) {
+    for value in values.iter_mut() {
+        *value *= factor;
+    }
+}
+
 /// Calculates the euclidean distance between two points.
 ///
 /// # Examples
@@ -248,12 +280,7 @@ where
 /// ```
 #[inline(always)]
 pub fn get_distance(target: RowRef<f64>, source: RowRef<f64>) -> f64 {
-    let mut dist = 0.0;
-    for (t, s) in target.iter().zip(source.iter()) {
-        let diff = t - s;
-        dist += diff * diff;
-    }
-    dist.sqrt()
+    distance_sq(target, source).sqrt()
 }
 
 /// Builds a dense kernel matrix using a typed kernel function.
@@ -415,9 +442,10 @@ macro_rules! for_each_kernel {
                 &mut self,
                 w: &faer::MatRef<'_, f64>,
                 x: &faer::Mat<f64>,
+                g: bool,
             ) -> Result<(), ferreus_bbfmm::FmmError> {
                 match self {
-                    $( Self::$V(t) => t.evaluate(w, x), )*
+                    $( Self::$V(t) => t.evaluate(w, x, g), )*
                 }
             }
 
@@ -427,9 +455,10 @@ macro_rules! for_each_kernel {
                 &mut self,
                 w: &faer::MatRef<'_, f64>,
                 x: &faer::Mat<f64>,
+                g: bool,
             ) -> Result<(), ferreus_bbfmm::FmmError> {
                 match self {
-                    $( Self::$V(t) => t.evaluate_leaves(w, x), )*
+                    $( Self::$V(t) => t.evaluate_leaves(w, x, g), )*
                 }
             }
 
@@ -438,6 +467,14 @@ macro_rules! for_each_kernel {
             pub fn target_values(&self) -> &faer::Mat<f64> {
                 match self {
                     $( Self::$V(t) => &t.target_values, )*
+                }
+            }
+
+            /// Returns the current gradients held by the FMM tree.
+            #[inline]
+            pub fn target_gradients(&self) -> &Option<faer::Mat<f64>> {
+                match self {
+                    $( Self::$V(t) => &t.target_gradients, )*
                 }
             }
 
