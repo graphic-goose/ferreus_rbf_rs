@@ -344,7 +344,6 @@ name = "ferreus_rbf"
 version = "0.2.0"
 dependencies = [
  "csv",
- "equator 0.4.2",
  "faer",
  "faer-traits",
  "ferreus_bbfmm",

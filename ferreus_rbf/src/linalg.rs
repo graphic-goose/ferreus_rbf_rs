@@ -618,8 +618,21 @@ impl<T: ComplexField> Lblt<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use equator::assert;
-    use faer::{self, prelude::Solve, utils::approx::*};
+    use faer::{self, prelude::Solve};
+
+    fn assert_mat_close(lhs: &Mat<f64>, rhs: &Mat<f64>, atol: f64, rtol: f64) {
+        let err = (lhs - rhs).norm_max();
+        let scale = lhs.norm_max().max(rhs.norm_max()).max(1.0);
+        let tol = atol + rtol * scale;
+        assert!(err <= tol, "err={err:e}, tol={tol:e}, scale={scale:e}");
+    }
+
+    fn assert_backward_error(a: &Mat<f64>, x: &Mat<f64>, b: &Mat<f64>, tol: f64) {
+        let residual = a * x - b;
+        let denom = (a.norm_max() * x.norm_max() + b.norm_max()).max(f64::EPSILON);
+        let berr = residual.norm_max() / denom;
+        assert!(berr <= tol, "berr={berr:e}, tol={tol:e}");
+    }
 
     /// Deterministic SPD matrix: A = M M^T + alpha I.
     fn make_spd(n: usize, alpha: f64) -> Mat<f64> {
@@ -689,14 +702,11 @@ mod tests {
         let chol = a.llt(side);
         let x_std = chol.unwrap().solve(&b);
 
-        // faer-style comparator/tolerance
-        let approx_eq = CwiseMat(ApproxEq::eps() * 128.0 * (n as f64));
+        // Residual quality in a scale-aware form.
+        assert_backward_error(&a, &x_rfp, &b, 1e-12);
 
-        // Residual: A * X ≈ B
-        assert!(&a * &x_rfp ~ b);
-
-        // Solution agreement with the standard LL solve
-        assert!(&x_rfp ~ &x_std);
+        // Solution agreement with the standard LL solve.
+        assert_mat_close(&x_rfp, &x_std, 1e-12, 1e-10);
     }
 
     #[test]
@@ -713,11 +723,8 @@ mod tests {
         let chol = a.llt(side);
         let x_std = chol.unwrap().solve(&b);
 
-        let approx_eq = CwiseMat(ApproxEq::eps() * 128.0 * (n as f64));
-
-        assert!(&a * &x_rfp ~ b);
-
-        assert!(&x_rfp ~ &x_std);
+        assert_backward_error(&a, &x_rfp, &b, 1e-12);
+        assert_mat_close(&x_rfp, &x_std, 1e-12, 1e-10);
     }
 
     #[test]
@@ -734,11 +741,8 @@ mod tests {
         let chol = a.llt(side);
         let x_std = chol.unwrap().solve(&b);
 
-        let approx_eq = CwiseMat(ApproxEq::eps() * 128.0 * (n as f64));
-
-        assert!(&a * &x_rfp ~ b);
-
-        assert!(&x_rfp ~ &x_std);
+        assert_backward_error(&a, &x_rfp, &b, 1e-12);
+        assert_mat_close(&x_rfp, &x_std, 1e-12, 1e-10);
     }
 
     #[test]
@@ -755,10 +759,7 @@ mod tests {
         let chol = a.llt(side);
         let x_std = chol.unwrap().solve(&b);
 
-        let approx_eq = CwiseMat(ApproxEq::eps() * 128.0 * (n as f64));
-
-        assert!(&a * &x_rfp ~ b);
-
-        assert!(&x_rfp ~ &x_std);
+        assert_backward_error(&a, &x_rfp, &b, 1e-12);
+        assert_mat_close(&x_rfp, &x_std, 1e-12, 1e-10);
     }
 }

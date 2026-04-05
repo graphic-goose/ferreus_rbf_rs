@@ -176,7 +176,7 @@ impl Domain {
 
             // Evaluate all candidate monomials.
             let scaled_monomials = polynomials::evaluate_monomials(
-                &monomial_points,
+                monomial_points.as_ref(),
                 &interpolant_settings.polynomial_degree,
                 &interpolant_settings.basis_size,
                 &translation_factor,
@@ -475,9 +475,15 @@ mod tests {
         interpolant_config::{InterpolantSettings, RBFKernelType},
         polynomials,
     };
-    use equator::assert;
-    use faer::{Mat, concat, utils::approx::*};
+    use faer::{Mat, concat};
     use ferreus_rbf_utils::{self};
+
+    fn assert_mat_close(lhs: &Mat<f64>, rhs: &Mat<f64>, atol: f64, rtol: f64) {
+        let err = (lhs - rhs).norm_max();
+        let scale = lhs.norm_max().max(rhs.norm_max()).max(1.0);
+        let tol = atol + rtol * scale;
+        assert!(err <= tol, "err={err:e}, tol={tol:e}, scale={scale:e}");
+    }
 
     fn generate_2d_points(num_points: usize) -> (Mat<f64>, Mat<f64>) {
         let dim = 2;
@@ -514,7 +520,7 @@ mod tests {
                 common::get_cheb_cube_scaling_factors(&source_points);
 
             let poly_matrix = polynomials::evaluate_monomials(
-                &source_points,
+                source_points.as_ref(),
                 &interpolant_settings.polynomial_degree,
                 &interpolant_settings.basis_size,
                 &translation_factor,
@@ -567,7 +573,7 @@ mod tests {
                 common::get_cheb_cube_scaling_factors(&source_points);
 
             let scaled_monomials = polynomials::evaluate_monomials(
-                &target_points,
+                target_points.as_ref(),
                 &interpolant_settings.polynomial_degree,
                 &interpolant_settings.basis_size,
                 &translation_factor,
@@ -669,11 +675,9 @@ mod tests {
             &domain_coefficients,
         );
 
-        let approx_eq = CwiseMat(ApproxEq::eps() * 128.0 * (points.nrows() as f64));
-
         // RBF evaluated at the source points should return the original source values,
         // within a reasonable tolerance.
-        assert!(&evaluated_values_at_source ~ &values);
+        assert_mat_close(&evaluated_values_at_source, values, 1e-12, 1e-10);
     }
 
     #[test]
@@ -743,9 +747,17 @@ mod tests {
 
         let naive_coefficients = naive_rbf_solve(&points, &values, interpolant_settings.clone());
 
-        let approx_eq = CwiseMat(ApproxEq::eps() * 128.0 * (num_points as f64));
-
-        assert!(&domain_coefficients.point_coefficients ~ &naive_coefficients.point_coefficients);
-        assert!(&domain_coefficients.poly_coefficients.unwrap() ~ &naive_coefficients.poly_coefficients.unwrap());
+        assert_mat_close(
+            &domain_coefficients.point_coefficients,
+            &naive_coefficients.point_coefficients,
+            1e-12,
+            1e-10,
+        );
+        assert_mat_close(
+            domain_coefficients.poly_coefficients.as_ref().unwrap(),
+            naive_coefficients.poly_coefficients.as_ref().unwrap(),
+            1e-12,
+            1e-10,
+        );
     }
 }

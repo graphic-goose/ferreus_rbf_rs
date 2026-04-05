@@ -8,7 +8,7 @@
 //
 /////////////////////////////////////////////////////////////////////////////////////////////
 
-use faer::{Mat, Row, concat, linalg::solvers::DenseSolveCore, mat};
+use faer::{Mat, MatRef, Row, concat, linalg::solvers::DenseSolveCore, mat};
 use serde::{Deserialize, Serialize};
 
 /// Defines an anisotropy transform for an RBF problem by specifying
@@ -263,7 +263,7 @@ impl GlobalTrendTransform {
         }
     }
 
-    pub fn transform_points(&self, points: &Mat<f64>) -> Mat<f64> {
+    pub fn transform_points(&self, points: MatRef<f64>) -> Mat<f64> {
         let homogenous_points = concat![[points, Mat::<f64>::ones(points.nrows(), 1)],];
 
         let translated = homogenous_points * &self.affine_transform;

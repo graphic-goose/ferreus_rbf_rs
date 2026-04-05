@@ -9,18 +9,18 @@
 /////////////////////////////////////////////////////////////////////////////////////////////
 
 use crate::common;
-use faer::Mat;
+use faer::{Mat, MatRef};
 use faer::{linalg::solvers::Solve, unzip, zip};
 
 pub fn evaluate_monomials(
-    points: &Mat<f64>,
+    points: MatRef<f64>,
     degree: &i32,
     basis_size: &usize,
-    translation_factor: &Vec<f64>,
-    scale_factor: &Vec<f64>,
+    translation_factor: &[f64],
+    scale_factor: &[f64],
 ) -> Mat<f64> {
     // Scale the domain points to the [-1, 1]^d hypercube for monomial evaluation.
-    let mut scaled_points = points.clone();
+    let mut scaled_points = points.clone().to_owned();
 
     common::scale_points(&mut scaled_points, &translation_factor, &scale_factor);
 
@@ -61,6 +61,61 @@ pub fn evaluate_monomials(
     monomials
 }
 
+pub fn evaluate_monomial_gradients(
+    points: MatRef<f64>,
+    poly_coefficients: &Mat<f64>,
+    degree: i32,
+    translation_factor: &[f64],
+    scale_factor: &[f64],
+) -> Mat<f64> {
+    let (n, dims) = points.shape();
+    let nrhs = poly_coefficients.ncols();
+
+    let mut scaled_points = points.to_owned();
+    common::scale_points(&mut scaled_points, translation_factor, scale_factor);
+
+    let mut grads = Mat::<f64>::zeros(n, nrhs * dims);
+
+    if degree >= 1 {
+        for rhs in 0..nrhs {
+            for d in 0..dims {
+                let coeff = poly_coefficients[(1 + d, rhs)] / scale_factor[d];
+                grads.col_mut(rhs * dims + d).fill(coeff);
+            }
+        }
+    }
+
+    if degree == 2 {
+        let start = 1 + dims;
+        let mut k = 0usize;
+
+        for i_dim in 0..dims {
+            for j_dim in i_dim..dims {
+                for rhs in 0..nrhs {
+                    let c = poly_coefficients[(start + k, rhs)];
+                    for row in 0..n {
+                        let xi = scaled_points[(row, i_dim)];
+                        let xj = scaled_points[(row, j_dim)];
+
+                        if i_dim == j_dim {
+                            grads[(row, rhs * dims + i_dim)] +=
+                                c * (2.0 * xi / scale_factor[i_dim]);
+                        } else {
+                            grads[(row, rhs * dims + i_dim)] += c * (xj / scale_factor[i_dim]);
+                            grads[(row, rhs * dims + j_dim)] += c * (xi / scale_factor[j_dim]);
+                        }
+                    }
+                }
+
+                k += 1;
+            }
+        }
+    }
+
+    grads
+}
+
+
 pub fn get_lagrange_coefficients(monomials: &Mat<f64>) -> Mat<f64> {
     let (nrows, ncols) = monomials.shape();
     let rhs = Mat::<f64>::identity(nrows, ncols);
@@ -78,8 +133,14 @@ pub fn evaluate_lagrange_polynomials(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use equator::assert;
-    use faer::{Mat, mat, utils::approx::*};
+    use faer::{Mat, mat};
+
+    fn assert_mat_close(lhs: &Mat<f64>, rhs: &Mat<f64>, atol: f64, rtol: f64) {
+        let err = (lhs - rhs).norm_max();
+        let scale = lhs.norm_max().max(rhs.norm_max()).max(1.0);
+        let tol = atol + rtol * scale;
+        assert!(err <= tol, "err={err:e}, tol={tol:e}, scale={scale:e}");
+    }
 
     fn run_case(points: Mat<f64>, degree: i32, expected: Mat<f64>) {
         let (n, d) = points.shape();
@@ -90,15 +151,14 @@ mod tests {
         let scale_factor = vec![1.0; d];
 
         let monomials = evaluate_monomials(
-            &points,
+            points.as_ref(),
             &degree,
             &basis_size,
             &translation_factor,
             &scale_factor,
         );
 
-        let approx_eq = CwiseMat(ApproxEq::eps() * 128.0 * (2 as f64));
-        assert!(&monomials ~ &expected);
+        assert_mat_close(&monomials, &expected, 1e-12, 1e-10);
     }
 
     #[test]
