@@ -428,6 +428,36 @@ class RBFTestFunctions:
         """
         ...
 
+class Coefficients:
+    """
+    Solved coefficients of an RBF system.
+    """
+
+    @property
+    def point_coefficients(self) -> npt.NDArray[np.float64]:
+        """Access the RBF coefficients for the source points.
+
+        Returns
+        ------- 
+        npt.NDArray[np.float64]
+            Array with shape (N, M), where N is the number of source points
+            and M is the number of columns of values.
+        """
+        ...
+
+    @property
+    def poly_coefficients(self) -> Optional[npt.NDArray[np.float64]]:
+        """Access the RBF coefficients for the Polynomial drift terms.
+
+        Returns
+        -------
+        Optional[npt.NDArray[np.float64]] 
+            Array with shape (B, M), if enabled, where B is the basis size 
+            (number of polynomial terms added to the system) and M is the 
+            number of columns of values.
+        """
+        ...
+
 class RBFInterpolator:
     """
     Radial basis function (RBF) interpolator.
@@ -461,8 +491,8 @@ class RBFInterpolator:
             Coordinates of the input data points with shape (N, D), where N is the number of points
             and D is the dimensionality.
         values : npt.NDArray[np.float64]
-            Observed values at the input source point locations with shape (N, M), where N
-            is the number of points and M is the number of columns of observed values to solve for.
+            Observed values at the input source point locations with shape (N, K), where N
+            is the number of points and K is the number of columns of observed values to solve for.
         interpolant_settings : InterpolantSettings
             Settings used to configure the interpolator.
         params : Optional[Params], optional
@@ -473,6 +503,42 @@ class RBFInterpolator:
             Optional callback for reporting solver progress, by default None            
         """
         ...
+
+    @property
+    def source_points(self) -> npt.NDArray[np.float64]:
+        """Access the stored source points from the interpolator
+
+        Returns
+        -------
+        npt.NDArray[np.float64]
+            Array of the source points with shape (N, D), where N is the number of source points
+            and D is the dimenstionality.
+        """
+        ...
+
+    @property
+    def source_values(self) -> npt.NDArray[np.float64]:
+        """Access the stored source values from the interpolator
+
+        Returns
+        -------
+        npt.NDArray[np.float64]
+            Array of interpolated values with shape (N, M), where N is the number of source points
+            and M is the number of columns of values.
+        """
+        ...
+
+    @property
+    def coefficients(self) -> Coefficients:
+        """Access solved RBF coefficients.
+        
+        Returns
+        -------
+        Coefficients
+            The solved RBF coefficients.
+        """
+        ...
+
 
     def evaluate(
         self,
@@ -495,7 +561,7 @@ class RBFInterpolator:
 
         Returns
         -------
-        npt.NDArray[np.float64]
+        values : npt.NDArray[np.float64]
             Array of interpolated values with shape (N, M), where N is the number of target points
             and M is the number of columns of values interpolated.
         """
@@ -522,11 +588,11 @@ class RBFInterpolator:
 
         Returns
         -------
-        npt.NDArray[np.float64]
+        values : npt.NDArray[np.float64]
             Array of interpolated values with shape (N, M), where N is the number of target points
             and M is the number of columns of values interpolated.
-        npt.NDArray[np.float64]
-            Array of interpolated gradients with shape (N, D X M), where N is the number of target points,
+        gradient : npt.NDArray[np.float64]
+            Array of interpolated gradients with shape (N, D x M), where N is the number of target points,
             D is the dimensionality and M is the number of columns of values interpolated.    
             The gradient values are stored in batches of D columns, so the first D columns are for each dimension
             of the first column of values evaluated, the second D columns are for each dimension of the second column
@@ -552,7 +618,7 @@ class RBFInterpolator:
             
         Returns
         -------
-        npt.NDArray[np.float64]
+        values : npt.NDArray[np.float64]
             Array of interpolated values with shape (N, M), where N is the number of source points
             and M is the number of columns of values interpolated.
         
@@ -600,7 +666,7 @@ class RBFInterpolator:
 
         Returns
         -------
-        npt.NDArray[np.float64]
+        values : npt.NDArray[np.float64]
             Array of interpolated values with shape (N, M), where N is the number of target points
             and M is the number of columns of values interpolated.
         """
@@ -629,11 +695,11 @@ class RBFInterpolator:
 
         Returns
         -------
-        npt.NDArray[np.float64]
+        values : npt.NDArray[np.float64]
             Array of interpolated values with shape (N, M), where N is the number of target points
             and M is the number of columns of values interpolated.
-        npt.NDArray[np.float64]
-            Array of interpolated gradients with shape (N, D X M), where N is the number of target points,
+        gradients : npt.NDArray[np.float64]
+            Array of interpolated gradients with shape (N, D x M), where N is the number of target points,
             D is the dimensionality and M is the number of columns of values interpolated.    
             The gradient values are stored in batches of D columns, so the first D columns are for each dimension
             of the first column of values evaluated, the second D columns are for each dimension of the second column
@@ -723,32 +789,6 @@ class RBFInterpolator:
         -------
         RBFInterpolator
             A solved RBFInterpolator that can be used for evaluations and surfacing.
-        """
-        ...
-
-    def source_points(
-        self,
-    ) -> npt.NDArray[np.float64]:
-        """Access the stored source points from the interpolator
-
-        Returns
-        -------
-        npt.NDArray[np.float64]
-            Array of the source points with shape (N, D), where N is the number of source points
-            and D is the dimenstionality.
-        """
-        ...
-
-    def source_values(
-        self,
-    ) -> npt.NDArray[np.float64]:
-        """Access the stored source values from the interpolator
-
-        Returns
-        -------
-        npt.NDArray[np.float64]
-            Array of interpolated values with shape (N, M), where N is the number of source points
-            and M is the number of columns of values.
         """
         ...
 

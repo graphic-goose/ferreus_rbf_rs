@@ -150,6 +150,19 @@ impl IterativeSolver {
     }
 }
 
+/// Helper for handling FmmError's during evaluation.
+#[inline(always)]
+fn panic_on_fmm_error<T>(err: FmmError) -> T {
+    match err {
+        FmmError::PointOutsideTree { point_index } => {
+            panic!("target row {} is outside evaluator extents", point_index)
+        }
+        FmmError::KernelDoesNotSupportGradients => {
+            panic!("gradient evaluation requested but kernel does not support gradients")
+        }
+    }
+}
+
 /// Enum defining whether the FMM should do a full evaluation (downward pass + leaf evaluation)
 /// or a leaf only evaluation.
 enum FmmEvaluatorMode {
@@ -667,7 +680,8 @@ impl RBFInterpolator {
             evaluator_mode: FmmEvaluatorMode::Full,
         };
 
-        let (interpolated_values, _) = _evaluate(evaluator_params);
+        let (interpolated_values, _) =
+            _evaluate(evaluator_params).unwrap_or_else(panic_on_fmm_error);
 
         interpolated_values
     }
@@ -718,7 +732,8 @@ impl RBFInterpolator {
             evaluator_mode: FmmEvaluatorMode::Full,
         };
 
-        let (interpolated_values, gradients) = _evaluate(evaluator_params);
+        let (interpolated_values, gradients) =
+            _evaluate(evaluator_params).unwrap_or_else(panic_on_fmm_error);
 
         (interpolated_values, gradients.unwrap())
     }
@@ -767,7 +782,8 @@ impl RBFInterpolator {
             evaluator_mode: FmmEvaluatorMode::Full,
         };
 
-        let (interpolated_values, _) = _evaluate(evaluator_params);
+        let (interpolated_values, _) =
+            _evaluate(evaluator_params).unwrap_or_else(panic_on_fmm_error);
 
         interpolated_values
     }
@@ -842,7 +858,8 @@ impl RBFInterpolator {
             evaluator_mode: FmmEvaluatorMode::Leaves,
         };
 
-        let (interpolated_values, _) = _evaluate(evaluator_params);
+        let (interpolated_values, _) =
+            _evaluate(evaluator_params).unwrap_or_else(panic_on_fmm_error);
 
         interpolated_values
     }
@@ -884,7 +901,8 @@ impl RBFInterpolator {
             evaluator_mode: FmmEvaluatorMode::Leaves,
         };
 
-        let (interpolated_values, gradients) = _evaluate(evaluator_params);
+        let (interpolated_values, gradients) =
+            _evaluate(evaluator_params).unwrap_or_else(panic_on_fmm_error);
 
         (interpolated_values, gradients.unwrap())
     }
@@ -1047,53 +1065,46 @@ impl RBFInterpolator {
 /// - Adds nugget on the diagonal when `add_nugget = true`.
 /// - Adds polynomial (monomial) contribution if a polynomial basis is enabled.
 #[inline(always)]
-fn _evaluate(evaluator_params: EvaluatorParams) -> (Mat<f64>, Option<Mat<f64>>) {
+fn _evaluate(evaluator_params: EvaluatorParams) -> Result<(Mat<f64>, Option<Mat<f64>>), FmmError> {
     let mut eval_points = evaluator_params.target_points.clone().to_owned();
 
     if let Some(gt) = evaluator_params.global_trend {
         eval_points = gt.transform_points(evaluator_params.target_points);
     }
 
-    if let Err(err) = match evaluator_params.evaluator_mode {
-        FmmEvaluatorMode::Leaves => evaluator_params.tree.evaluate_leaves(
-            &evaluator_params.coefficients.point_coefficients.as_ref(),
-            &eval_points,
-            evaluator_params.evaluate_gradients,
+    let (mut values, mut gradients) = match (
+        evaluator_params.evaluator_mode,
+        evaluator_params.evaluate_gradients,
+    ) {
+        (FmmEvaluatorMode::Leaves, false) => (
+            evaluator_params.tree.evaluate_leaves(
+                &evaluator_params.coefficients.point_coefficients.as_ref(),
+                &eval_points,
+            )?,
+            None,
         ),
-        FmmEvaluatorMode::Full => evaluator_params.tree.evaluate(
-            &evaluator_params.coefficients.point_coefficients.as_ref(),
-            &eval_points,
-            evaluator_params.evaluate_gradients,
-        ),
-    } {
-        match err {
-            FmmError::PointOutsideTree { point_index } => {
-                panic!(
-                    "FMM evaluation failed in evaluate_targets: \
-                    target point at row {} lies outside the evaluator extents. \
-                    Ensure the extents passed to build_evaluator(..) cover all \
-                    target points.",
-                    point_index
-                );
-            }
-            FmmError::KernelDoesNotSupportGradients => {
-                panic!(
-                    "FMM evaluation failed in evaluate_targets: \
-                    gradient evaluation requested but kernel does not support gradients."
-                );
-            }
+        (FmmEvaluatorMode::Leaves, true) => {
+            let (values, gradients) = evaluator_params.tree.evaluate_leaves_with_gradients(
+                &evaluator_params.coefficients.point_coefficients.as_ref(),
+                &eval_points,
+            )?;
+            (values, Some(gradients))
         }
-    }
-
-    let mut values = evaluator_params.tree.target_values().cloned();
-    let mut gradients = evaluator_params.evaluate_gradients.then(|| {
-        evaluator_params
-            .tree
-            .target_gradients()
-            .as_ref()
-            .expect("Evaluator requested gradients")
-            .clone()
-    });
+        (FmmEvaluatorMode::Full, false) => (
+            evaluator_params.tree.evaluate(
+                &evaluator_params.coefficients.point_coefficients.as_ref(),
+                &eval_points,
+            )?,
+            None,
+        ),
+        (FmmEvaluatorMode::Full, true) => {
+            let (values, gradients) = evaluator_params.tree.evaluate_with_gradients(
+                &evaluator_params.coefficients.point_coefficients.as_ref(),
+                &eval_points,
+            )?;
+            (values, Some(gradients))
+        }
+    };
 
     if let (Some(gt), Some(grads)) = (evaluator_params.global_trend, gradients.as_mut()) {
         apply_global_trend_to_gradients(
@@ -1143,7 +1154,7 @@ fn _evaluate(evaluator_params: EvaluatorParams) -> (Mat<f64>, Option<Mat<f64>>) 
         }
     }
 
-    (values, gradients)
+    Ok((values, gradients))
 }
 
 fn apply_global_trend_to_gradients(
@@ -1237,30 +1248,15 @@ pub(crate) fn fast_matrix_vector_product(
     let target_points =
         ferreus_rbf_utils::select_mat_rows(&fmm_tree.source_points(), &evaluation_indices);
 
-    if let Err(err) = fmm_tree.evaluate(&weights, &target_points, false) {
-        match err {
-            FmmError::PointOutsideTree { point_index } => {
-                panic!(
-                    "Internal FMM evaluation failed in fast_matrix_vector_product: \
-                     source/target point at row {} lies outside the FMM tree extents.",
-                    point_index
-                );
-            }
-            FmmError::KernelDoesNotSupportGradients => {
-                panic!(
-                    "Internal FMM evaluation failed in fast_matrix_vector_product: \
-                     gradient evaluation was requested but the selected kernel \
-                     does not support gradients."
-                );
-            }
-        }
-    }
+    let target_values = fmm_tree
+        .evaluate(&weights, &target_points)
+        .unwrap_or_else(panic_on_fmm_error);
 
     evaluation_indices
         .iter()
         .enumerate()
         .for_each(|(fmm_idx, result_idx)| {
-            result[(*result_idx, 0)] = *fmm_tree.target_values().get(fmm_idx, 0);
+            result[(*result_idx, 0)] = *target_values.get(fmm_idx, 0);
             result[(*result_idx, 0)] += weights.get(*result_idx, 0) * nugget;
             if polynomial_matrix.is_some() {
                 result[(*result_idx, 0)] += &polynomial_matrix.as_ref().unwrap().row(*result_idx)

@@ -91,9 +91,9 @@
 //! let target_points = source_points.clone();
 //!
 //! // Perform a downward pass to set the local coefficients, then perform a leaf evaluation
-//! tree.evaluate(&weights.as_ref(), &target_points, false);
+//! let target_values = tree.evaluate(&weights.as_ref(), &target_points).unwrap();
 //!
-//! println!("Evaluated values at source locations: {:?}", tree.target_values);
+//! println!("Evaluated values at source locations: {:?}", target_values);
 //! ```
 //! 
 //! # Example: Fast Matrix-Vector Product with gradients
@@ -192,12 +192,11 @@
 //! let target_points = source_points.clone();
 //!
 //! // Perform a downward pass to set the local coefficients, then perform a leaf evaluation
-//! // Settings the evaluate_gradients parameter to true will evaluate gradients along with values at
-//! // the target locations.
-//! tree.evaluate(&weights.as_ref(), &target_points, true);
+//! // to evaluate the values and gradients at the target locations.
+//! let (target_values, gradients) = tree.evaluate_with_gradients(&weights.as_ref(), &target_points).unwrap();
 //!
-//! println!("Evaluated values at source locations: {:?}", tree.target_values);
-//! println!("Evaluated gradients at source locations: {:?}", tree.target_gradients.unwrap());
+//! println!("Evaluated values at source locations: {:?}", target_values);
+//! println!("Evaluated gradients at source locations: {:?}", gradients);
 //! ``` 
 //!
 //! # Example: RBF Evaluator
@@ -281,18 +280,18 @@
 //! let target_points = Mat::from_fn(num_target_points, dim, |_, _| rng.random_range(-2.0..2.0));
 //!
 //! // Perform a leaf evaluation
-//! tree.evaluate_leaves(&weights.as_ref(), &target_points, false);
+//! let target_values = tree.evaluate_leaves(&weights.as_ref(), &target_points).unwrap();
 //!
-//! println!("Evaluated values at target locations: {:?}", tree.target_values);
+//! println!("Evaluated values at target locations: {:?}", target_values);
 //!
 //! // Create some more target points
 //! let num_target_points = 1000;
 //! let target_points = Mat::from_fn(num_target_points, dim, |_, _| rng.random_range(-2.0..2.0));
 //!
 //! // Perform another leaf evaluation
-//! tree.evaluate_leaves(&weights.as_ref(), &target_points, false);
+//! let target_values = tree.evaluate_leaves(&weights.as_ref(), &target_points).unwrap();
 //!
-//! println!("Evaluated values at target locations: {:?}", tree.target_values);
+//! println!("Evaluated values at target locations: {:?}", target_values);
 //! ```
 //!
 //! # References

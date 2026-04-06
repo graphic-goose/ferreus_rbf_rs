@@ -40,7 +40,7 @@ tree.set_weights(weights)
 target_points = source_points.copy()
 
 # Perform a downward pass to set the local coefficients, then perform a leaf evaluation
-tree.evaluate(weights, target_points, evaluate_gradients=True)
+target_values, target_gradients = tree.evaluate_with_gradients(weights, target_points)
 
-print(f"Evaluated values at source locations: {tree.target_values()}")
-print(f"Evaluated gradients at source locations: {tree.target_gradients()}")
+print(f"Evaluated values at source locations: {target_values}")
+print(f"Evaluated gradients at source locations: {target_gradients}")

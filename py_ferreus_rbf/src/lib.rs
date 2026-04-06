@@ -58,6 +58,7 @@ pub fn ferreus_rbf(m: &Bound<'_, PyModule>) -> PyResult<()> {
         .set_item("ferreus_rbf.interpolant_config", interp)?;
 
     m.add_class::<python_bindings::RBFInterpolator>()?;
+    m.add_class::<python_bindings::Coefficients>()?;
     m.add_class::<python_bindings::GlobalTrend>()?;
     m.add_class::<python_bindings::RBFTestFunctions>()?;
 

@@ -292,10 +292,9 @@ class FmmTree:
         self,
         weights: npt.NDArray[np.float64],
         target_points: npt.NDArray[np.float64],
-        evaluate_gradients: Optional[bool],
-    ) -> None: 
+    ) -> npt.NDArray[np.float64]: 
         """Performs a downward pass of the tree to set the local coefficients and
-        then performs a leaf evaluation pass to evaluate the values, and optionally gradients, at the
+        then performs a leaf evaluation pass to evaluate the values at the
         target locations.
 
         Parameters
@@ -306,8 +305,44 @@ class FmmTree:
         target_points : npt.NDArray[np.float64]
             Numpy array of shape (N, D), where N is the number of target points and D is the
             dimensionality.
-        evaluate_gradients : Optional[bool]
-            Optional boolean that enables the evaluation of gradients along with the values.            
+
+        Returns
+        -------
+        values : npt.NDArray[np.float64]
+            Array of evaluated values with shape (N, K), where N is the number of target points and K
+            is the number of right-hand-sides evaluated.                  
+        """
+        ...
+
+    def evaluate_with_gradients(
+        self,
+        weights: npt.NDArray[np.float64],
+        target_points: npt.NDArray[np.float64],
+    ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]: 
+        """Performs a downward pass of the tree to set the local coefficients and
+        then performs a leaf evaluation pass to evaluate the values and gradients at the
+        target locations.
+
+        Parameters
+        ----------
+        weights : npt.NDArray[np.float64]
+            Numpy array of shape (N, K), where N is the number of source points and K is the number
+            of right-hand sides to evaluate, containing source point weights (values)
+        target_points : npt.NDArray[np.float64]
+            Numpy array of shape (N, D), where N is the number of target points and D is the
+            dimensionality.
+
+        Returns
+        -------
+        values : npt.NDArray[np.float64]
+            Array of evaluated values with shape (N, K), where N is the number of target points and K
+            is the number of right-hand-sides evaluated.
+        gradients : npt.NDArray[np.float64]
+            Array of evaluated gradients with shape (N, D x M), where N is the number of target points,
+            D is the dimensionality and M is the number of columns of values interpolated.    
+            The gradient values are stored in batches of D columns, so the first D columns are for each dimension
+            of the first column of values evaluated, the second D columns are for each dimension of the second column
+            of values evaluated etc.                                       
         """
         ...
 
@@ -330,9 +365,8 @@ class FmmTree:
         self,
         weights: npt.NDArray[np.float64],
         target_points: npt.NDArray[np.float64],
-        evaluate_gradients: Optional[bool],
-    ) -> None: 
-        """Performs a leaf evaluation pass to calculate the values, and optionally gradients, at the target locations. 
+    ) -> npt.NDArray[np.float64]: 
+        """Performs a leaf evaluation pass to calculate the values at the target locations. 
         Intended to be used after [`set_local_coefficients`][ferreus_bbfmm.FmmTree.set_local_coefficients],
         for when repeated calls to this function are desired, such as when using 'surface following'
         isosurface generation algorithms.
@@ -345,8 +379,45 @@ class FmmTree:
         target_points : npt.NDArray[np.float64]
             Numpy array of shape (N, D), where N is the number of target points and D is the
             dimensionality.
-        evaluate_gradients : Optional[bool]
-            Optional boolean that enables the evaluation of gradients along with the values.
+
+        Returns
+        -------
+        values : npt.NDArray[np.float64]
+            Array of evaluated values with shape (N, K), where N is the number of target points and K
+            is the number of right-hand-sides evaluated.    
+        """
+        ...
+
+    def evaluate_leaves_with_gradients(
+        self,
+        weights: npt.NDArray[np.float64],
+        target_points: npt.NDArray[np.float64],
+    ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]: 
+        """Performs a leaf evaluation pass to calculate the values and gradients at the target locations. 
+        Intended to be used after [`set_local_coefficients`][ferreus_bbfmm.FmmTree.set_local_coefficients],
+        for when repeated calls to this function are desired, such as when using 'surface following'
+        isosurface generation algorithms.
+
+        Parameters
+        ----------
+        weights : npt.NDArray[np.float64]
+            Numpy array of shape (N, K), where N is the number of source points and K is the number
+            of right-hand sides to evaluate, containing source point weights (values)
+        target_points : npt.NDArray[np.float64]
+            Numpy array of shape (N, D), where N is the number of target points and D is the
+            dimensionality.
+            
+        Returns
+        -------
+        values : npt.NDArray[np.float64]
+            Array of evaluated values with shape (N, K), where N is the number of target points and K
+            is the number of right-hand-sides evaluated.
+        gradients : npt.NDArray[np.float64]
+            Array of evaluated gradients with shape (N, D x M), where N is the number of target points,
+            D is the dimensionality and M is the number of columns of values interpolated.    
+            The gradient values are stored in batches of D columns, so the first D columns are for each dimension
+            of the first column of values evaluated, the second D columns are for each dimension of the second column
+            of values evaluated etc.                  
         """
         ...
 
@@ -357,41 +428,9 @@ class FmmTree:
 
         Returns
         -------
-        npt.NDArray[np.float64]
+        source_points : npt.NDArray[np.float64]
             Numpy array of shape (N, D), where N is the number of source points and D is the
             dimensionality.
-        """
-        ...
-
-    def target_values(
-        self,
-    ) -> npt.NDArray[np.float64]: 
-        """Values at target locations after [evaluate][ferreus_bbfmm.FmmTree.evaluate] or
-        [evaluate_leaves][ferreus_bbfmm.FmmTree.evaluate_leaves] is called.
-
-        Returns
-        -------
-        npt.NDArray[np.float64]
-            Returns a numpy array with shape (N, K), where N is the number of target points and K
-            is the number of right-hand-sides evaluated.
-        """
-        ...
-
-    def target_gradients(
-        self,
-    ) -> npt.NDArray[np.float64]: 
-        """Gradients at target locations after [evaluate][ferreus_bbfmm.FmmTree.evaluate] or
-        [evaluate_leaves][ferreus_bbfmm.FmmTree.evaluate_leaves] is called with the optional
-        `evaluate_gradients` kwarg set to True.
-
-        Returns
-        -------
-        npt.NDArray[np.float64]
-            Array of interpolated gradients with shape (N, D X M), where N is the number of target points,
-            D is the dimensionality and M is the number of columns of values interpolated.    
-            The gradient values are stored in batches of D columns, so the first D columns are for each dimension
-            of the first column of values evaluated, the second D columns are for each dimension of the second column
-            of values evaluated etc.
         """
         ...
 

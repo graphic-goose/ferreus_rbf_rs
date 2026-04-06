@@ -255,14 +255,13 @@ impl FmmTree {
         Ok(())
     }
 
-    #[pyo3(signature=(weights, target_points, evaluate_gradients=false))]
+    #[pyo3(signature=(weights, target_points))]
     fn evaluate(
         &mut self,
         py: Python<'_>,
         weights: Py<PyAny>,
         target_points: Py<PyAny>,
-        evaluate_gradients: bool,
-    ) -> PyResult<()> {
+    ) -> PyResult<Py<PyAny>> {
         let w = numpy_to_matref(py, &weights).map_err(|_| {
             pyo3::exceptions::PyTypeError::new_err("Expected 1D/2D float64 for weights")
         })?;
@@ -271,7 +270,7 @@ impl FmmTree {
                 pyo3::exceptions::PyTypeError::new_err("Expected 1D/2D float64 for target_points")
             })?
             .to_owned();
-        self.inner.evaluate(&w, &x, evaluate_gradients).map_err(|err| {
+        let target_values = self.inner.evaluate(&w, &x).map_err(|err| {
             let msg = match err {
                 FmmError::PointOutsideTree { point_index } => format!(
                     "FMM evaluation failed: target point at row {} lies outside the tree extents",
@@ -283,17 +282,16 @@ impl FmmTree {
             };
             pyo3::exceptions::PyValueError::new_err(msg)
         })?;
-        Ok(())
+        Ok(mat_to_numpy(&target_values, py))
     }
 
-    #[pyo3(signature=(weights, target_points, evaluate_gradients=false))]
-    fn evaluate_leaves(
+    #[pyo3(signature=(weights, target_points))]
+    fn evaluate_with_gradients(
         &mut self,
         py: Python<'_>,
         weights: Py<PyAny>,
         target_points: Py<PyAny>,
-        evaluate_gradients: bool,
-    ) -> PyResult<()> {
+    ) -> PyResult<(Py<PyAny>, Py<PyAny>)> {
         let w = numpy_to_matref(py, &weights).map_err(|_| {
             pyo3::exceptions::PyTypeError::new_err("Expected 1D/2D float64 for weights")
         })?;
@@ -302,8 +300,38 @@ impl FmmTree {
                 pyo3::exceptions::PyTypeError::new_err("Expected 1D/2D float64 for target_points")
             })?
             .to_owned();
-        self.inner
-            .evaluate_leaves(&w, &x, evaluate_gradients)
+        let (target_values, gradients) = self.inner.evaluate_with_gradients(&w, &x).map_err(|err| {
+            let msg = match err {
+                FmmError::PointOutsideTree { point_index } => format!(
+                    "FMM evaluation failed: target point at row {} lies outside the tree extents",
+                    point_index
+                ),
+                FmmError::KernelDoesNotSupportGradients => {
+                    "FMM evaluation failed: gradient evaluation requested but kernel does not support gradients".to_string()
+                }
+            };
+            pyo3::exceptions::PyValueError::new_err(msg)
+        })?;
+        Ok((mat_to_numpy(&target_values, py), mat_to_numpy(&gradients, py)))
+    }
+
+    #[pyo3(signature=(weights, target_points))]
+    fn evaluate_leaves(
+        &mut self,
+        py: Python<'_>,
+        weights: Py<PyAny>,
+        target_points: Py<PyAny>,
+    ) -> PyResult<Py<PyAny>> {
+        let w = numpy_to_matref(py, &weights).map_err(|_| {
+            pyo3::exceptions::PyTypeError::new_err("Expected 1D/2D float64 for weights")
+        })?;
+        let x = numpy_to_matref::<f64>(py, &target_points)
+            .map_err(|_| {
+                pyo3::exceptions::PyTypeError::new_err("Expected 1D/2D float64 for target_points")
+            })?
+            .to_owned();
+        let target_points = self.inner
+            .evaluate_leaves(&w, &x)
             .map_err(|err| {
                 let msg = match err {
                     FmmError::PointOutsideTree { point_index } => format!(
@@ -316,22 +344,37 @@ impl FmmTree {
                 };
                 pyo3::exceptions::PyValueError::new_err(msg)
             })?;
-        Ok(())
+        Ok(mat_to_numpy(&target_points, py))
     }
 
-    /// Returns the last computed target values as a NumPy array.
-    fn target_values(&self, py: Python<'_>) -> Py<PyAny> {
-        mat_to_numpy(&self.inner.target_values(), py)
-    }
-
-    /// Returns the last computed gradients as a NumPy array.
-    fn target_gradients(&self, py: Python<'_>) -> Option<Py<PyAny>> {
-        let target_grads = self.inner.target_gradients();
-        if let Some(grads) = target_grads {
-            Some(mat_to_numpy(grads, py))
-        } else {
-            None
-        }
+    #[pyo3(signature=(weights, target_points))]
+    fn evaluate_leaves_with_gradients(
+        &mut self,
+        py: Python<'_>,
+        weights: Py<PyAny>,
+        target_points: Py<PyAny>,
+    ) -> PyResult<(Py<PyAny>, Py<PyAny>)> {
+        let w = numpy_to_matref(py, &weights).map_err(|_| {
+            pyo3::exceptions::PyTypeError::new_err("Expected 1D/2D float64 for weights")
+        })?;
+        let x = numpy_to_matref::<f64>(py, &target_points)
+            .map_err(|_| {
+                pyo3::exceptions::PyTypeError::new_err("Expected 1D/2D float64 for target_points")
+            })?
+            .to_owned();
+        let (target_values, gradients) = self.inner.evaluate_leaves_with_gradients(&w, &x).map_err(|err| {
+            let msg = match err {
+                FmmError::PointOutsideTree { point_index } => format!(
+                    "FMM evaluation failed: target point at row {} lies outside the tree extents",
+                    point_index
+                ),
+                FmmError::KernelDoesNotSupportGradients => {
+                    "FMM evaluation failed: gradient evaluation requested but kernel does not support gradients".to_string()
+                }
+            };
+            pyo3::exceptions::PyValueError::new_err(msg)
+        })?;
+        Ok((mat_to_numpy(&target_values, py), mat_to_numpy(&gradients, py)))
     }
 
     /// Returns the source points matrix as a NumPy array.

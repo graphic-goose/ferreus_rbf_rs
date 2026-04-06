@@ -60,15 +60,15 @@ num_target_points = 100
 target_points = np.random.random((num_target_points, dim)) * 4 - 2
 
 # Perform a leaf evaluation
-tree.evaluate_leaves(weights, target_points)
+target_values = tree.evaluate_leaves(weights, target_points)
 
-print(f"Evaluated values at target locations: {tree.target_values()}")
+print(f"Evaluated values at target locations: {target_values}")
 
 # Create some more target points
 num_target_points = 1000
 target_points = np.random.random((num_target_points, dim)) * 4 - 2
 
 # Perform another leaf evaluation
-tree.evaluate_leaves(weights, target_points)
+target_values = tree.evaluate_leaves(weights, target_points)
 
-print(f"Evaluated values at target locations: {tree.target_values()}")
+print(f"Evaluated values at target locations: {target_values}")

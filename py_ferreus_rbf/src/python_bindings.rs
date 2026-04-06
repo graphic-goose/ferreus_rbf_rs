@@ -537,6 +537,28 @@ impl From<&GlobalTrend> for ferreus_rbf::GlobalTrend {
 }
 
 #[pyclass]
+#[derive(Clone)]
+pub struct Coefficients {
+    point_coefficients: Mat<f64>,
+    poly_coefficients: Option<Mat<f64>>,
+}
+
+#[pymethods]
+impl Coefficients {
+    #[getter]
+    fn point_coefficients<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
+        mat_to_numpy(&self.point_coefficients, py)
+    }
+
+    #[getter]
+    fn poly_coefficients<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyArray2<f64>>> {
+        self.poly_coefficients
+            .as_ref()
+            .map(|poly| mat_to_numpy(poly, py))
+    }
+}
+
+#[pyclass]
 pub struct RBFInterpolator {
     inner: ferreus_rbf::RBFInterpolator,
 }
@@ -723,16 +745,27 @@ impl RBFInterpolator {
         Ok(Self { inner })
     }
 
+    /// Access solved RBF coefficients.
+    #[getter]
+    fn coefficients(&self) -> Coefficients {
+        Coefficients {
+            point_coefficients: self.inner.coefficients.point_coefficients.clone(),
+            poly_coefficients: self.inner.coefficients.poly_coefficients.clone(),
+        }
+    }
+
     /// Access the stored source points from the interpolator
+    #[getter]
     fn source_points<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
         let points = &self.inner.points;
         mat_to_numpy(&points, py)
     }
 
     /// Access the stored source values from the interpolator
+    #[getter]
     fn source_values<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
-        let points = &self.inner.points;
-        mat_to_numpy(&points, py)
+        let values = &self.inner.point_values;
+        mat_to_numpy(&values, py)
     }
 }
 

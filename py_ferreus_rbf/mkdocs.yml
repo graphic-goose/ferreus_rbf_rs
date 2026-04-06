@@ -112,6 +112,7 @@ nav:
       - Overview: api/index.md
       - Core:
         - RBFInterpolator: api/RBFInterpolator.md
+        - Coefficients: api/Coefficients.md
         - GlobalTrend: api/GlobalTrend.md
       - Interpolant Config:
         - InterpolantSettings: api/InterpolantSettings.md

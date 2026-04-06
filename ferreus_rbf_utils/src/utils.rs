@@ -442,10 +442,21 @@ macro_rules! for_each_kernel {
                 &mut self,
                 w: &faer::MatRef<'_, f64>,
                 x: &faer::Mat<f64>,
-                g: bool,
-            ) -> Result<(), ferreus_bbfmm::FmmError> {
+            ) -> Result<Mat<f64>, ferreus_bbfmm::FmmError> {
                 match self {
-                    $( Self::$V(t) => t.evaluate(w, x, g), )*
+                    $( Self::$V(t) => t.evaluate(w, x), )*
+                }
+            }
+
+            /// Evaluates the FMM and gradients at the supplied target points.
+            #[inline]
+            pub fn evaluate_with_gradients(
+                &mut self,
+                w: &faer::MatRef<'_, f64>,
+                x: &faer::Mat<f64>,
+            ) -> Result<(Mat<f64>, Mat<f64>), ferreus_bbfmm::FmmError> {
+                match self {
+                    $( Self::$V(t) => t.evaluate_with_gradients(w, x), )*
                 }
             }
 
@@ -455,26 +466,21 @@ macro_rules! for_each_kernel {
                 &mut self,
                 w: &faer::MatRef<'_, f64>,
                 x: &faer::Mat<f64>,
-                g: bool,
-            ) -> Result<(), ferreus_bbfmm::FmmError> {
+            ) -> Result<Mat<f64>, ferreus_bbfmm::FmmError> {
                 match self {
-                    $( Self::$V(t) => t.evaluate_leaves(w, x, g), )*
+                    $( Self::$V(t) => t.evaluate_leaves(w, x), )*
                 }
             }
 
-            /// Returns the current target values held by the FMM tree.
+            /// Evaluates only the leaf-level contributions and gradients at the supplied target points.
             #[inline]
-            pub fn target_values(&self) -> &faer::Mat<f64> {
+            pub fn evaluate_leaves_with_gradients(
+                &mut self,
+                w: &faer::MatRef<'_, f64>,
+                x: &faer::Mat<f64>,
+            ) -> Result<(Mat<f64>, Mat<f64>), ferreus_bbfmm::FmmError> {
                 match self {
-                    $( Self::$V(t) => &t.target_values, )*
-                }
-            }
-
-            /// Returns the current gradients held by the FMM tree.
-            #[inline]
-            pub fn target_gradients(&self) -> &Option<faer::Mat<f64>> {
-                match self {
-                    $( Self::$V(t) => &t.target_gradients, )*
+                    $( Self::$V(t) => t.evaluate_leaves_with_gradients(w, x), )*
                 }
             }
 

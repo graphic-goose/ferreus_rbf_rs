@@ -40,6 +40,6 @@ tree.set_weights(weights)
 target_points = source_points.copy()
 
 # Perform a downward pass to set the local coefficients, then perform a leaf evaluation
-tree.evaluate(weights, target_points)
+target_values = tree.evaluate(weights, target_points)
 
-print(f"Evaluated values at source locations: {tree.target_values()}")
+print(f"Evaluated values at source locations: {target_values}")
