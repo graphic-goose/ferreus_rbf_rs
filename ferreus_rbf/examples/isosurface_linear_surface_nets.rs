@@ -1,7 +1,7 @@
 /////////////////////////////////////////////////////////////////////////////////////////////
 //
-// Example 3D isosurface generation with 35,801 input signed distance points using the
-// spheroidal RBF kernel and constant drift.
+// Example 3D isosurface generation with 35,801 input signed distance points using the linear
+// RBF kernel and the default constant drift.
 //
 // Created on: 15 Nov 2025     Author: Daniel Owen
 //
@@ -9,15 +9,14 @@
 //
 /////////////////////////////////////////////////////////////////////////////////////////////
 
-use faer::Mat;
+use faer::{Mat, MatRef};
 use ferreus_rbf::{
     RBFInterpolator, csv_to_point_arrays,
     interpolant_config::{
-        Drift, FittingAccuracy, FittingAccuracyType, InterpolantSettings, RBFKernelType,
-        SpheroidalOrder,
+        FittingAccuracy, FittingAccuracyType, InterpolantSettings, RBFKernelType,
     },
     progress::{ProgressMsg, ProgressSink, closure_sink},
-    isosurfacing::save_obj,
+    isosurfacing::{surface_nets, save_obj},
 };
 use ferreus_rbf_utils;
 use std::{env, sync::Arc};
@@ -85,15 +84,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let source_point_extents = ferreus_rbf_utils::get_pointarray_extents(source_points.as_ref());
 
     // Define the RBF kernel to use
-    let kernel_type = RBFKernelType::Spheroidal;
-
-    // Define the spheroidal interpolant parameters
-    let order = SpheroidalOrder::Three;
-    let base_range = 50.0;
-    let sill = 10.0;
-
-    // Define a drift other than the default
-    let drift = Drift::Constant;
+    let kernel_type = RBFKernelType::Linear;
 
     // Define the desired fitting accuracy
     let fitting_accuracy = FittingAccuracy {
@@ -104,38 +95,58 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialise an InterpolantSettings instance
     let interpolant_settings = InterpolantSettings::builder(kernel_type)
         .fitting_accuracy(fitting_accuracy)
-        .spheroidal_order(order)
-        .base_range(base_range)
-        .total_sill(sill)
-        .drift(drift)
         .build();
 
     // Create a callback to receive progress updates from the RBFInterpolator
     let callback = get_callback_sink();
 
     // Setup and solve the RBF system
-    let mut rbfi = RBFInterpolator::builder(source_points, source_values, interpolant_settings)
+    let mut rbfi = RBFInterpolator::builder(source_points.clone(), source_values.clone(), interpolant_settings)
         .progress_callback(callback.clone())
         .build();
 
     // Define the sampling grid resolution for the surfacer
-    let resolution = 5.0;
+    let resolution = 0.1;
+
+    let bbox_padding = 2.0;
+
+    let evaluator_extents: Vec<f64> = source_point_extents
+        .iter()
+        .enumerate()
+        .map(|(idx, val)| {
+            match idx < 3 {
+                true => val - &resolution * (&bbox_padding + 1.0),
+                false => val + &resolution * (&bbox_padding + 1.0),
+            }
+        })
+        .collect();
 
     //  Define the isovalues at which to surface
-    let isovalues = vec![0.0];
+    let isovalue = 0.0;
+
+    let mut surface_fn = move |targets: MatRef<f64>| {
+        rbfi.evaluate_targets(targets)
+    };
 
     // Generate an isosurface
-    let (all_isosurface_points, all_isosurface_faces) =
-        rbfi.build_isosurfaces(&source_point_extents, &resolution, &isovalues);
+    let (verts, faces) = surface_nets(
+        &evaluator_extents,
+        resolution,
+        isovalue,
+        &mut surface_fn,
+        source_points.as_ref(),
+        source_values.as_ref(),
+        &None,
+    );
 
     //Save the isosurface out to an obj file
-    let name = format!("isosurface_spheroidal_drift_{}m", fmt_num(resolution));
+    let name = format!("isosurface_linear_{}m", fmt_num(resolution));
     let outpath = cwd.join("examples").join(format!("{}.obj", &name));
     save_obj(
         outpath,
         &name,
-        all_isosurface_points[0].as_ref(),
-        all_isosurface_faces[0].as_ref(),
+        verts.as_ref(),
+        faces.as_ref(),
     )?;
 
     Ok(())

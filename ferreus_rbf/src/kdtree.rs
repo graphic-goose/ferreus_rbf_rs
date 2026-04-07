@@ -8,7 +8,7 @@
 //
 /////////////////////////////////////////////////////////////////////////////////////////////
 
-use faer::{Mat, Row, RowRef};
+use faer::{Mat, MatRef, Row, RowRef};
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
@@ -95,7 +95,7 @@ pub struct KDTree {
 
 impl KDTree {
     /// Constructs a new KDTree from a Mat of points.
-    pub fn new(nd_array: &Mat<f64>) -> Self {
+    pub fn new(nd_array: MatRef<f64>) -> Self {
         let shape = nd_array.shape();
         let nd_array_nrows = shape.0;
         let mut points: Vec<PointRowWithId> = Vec::new();
@@ -363,7 +363,7 @@ mod tests {
             (400, 3, 999u64, 0.3),
         ] {
             let points = random_points(n, d, seed);
-            let tree = KDTree::new(&points);
+            let tree = KDTree::new(points.as_ref());
             let mut rng = StdRng::seed_from_u64(seed + 50);
 
             for _ in 0..25 {
@@ -382,7 +382,7 @@ mod tests {
     fn radius_search_matches_bruteforce_infnorm_1d_2d_3d() {
         for (n, d, seed) in [(150, 1, 1u64), (200, 2, 2u64), (250, 3, 3u64)] {
             let points = random_points(n, d, seed);
-            let tree = KDTree::new(&points);
+            let tree = KDTree::new(points.as_ref());
             let mut rng = StdRng::seed_from_u64(seed + 100);
 
             for _ in 0..25 {
@@ -412,7 +412,7 @@ mod tests {
         points[(3, 0)] = 0.2;
         points[(3, 1)] = 0.2;
 
-        let tree = KDTree::new(&points);
+        let tree = KDTree::new(points.as_ref());
         let q = make_query_point(points.row(0));
 
         // Euclidean radius 0.2: should include 0,1,2 (distance 0, 0.2, 0.2). Point 3 is ~0.282842.
@@ -429,7 +429,7 @@ mod tests {
     #[test]
     fn empty_tree_returns_empty() {
         let points = Mat::<f64>::zeros(0, 3);
-        let tree = KDTree::new(&points);
+        let tree = KDTree::new(points.as_ref());
         let q = make_query_point(Mat::<f64>::zeros(1, 3).row(0));
         let out = tree.radius_search(&q, 1.0, DistanceMetric::Euclidean);
         assert!(out.is_empty());
@@ -441,7 +441,7 @@ mod tests {
         points[(0, 0)] = 0.5;
         points[(0, 1)] = 0.5;
         points[(0, 2)] = 0.5;
-        let tree = KDTree::new(&points);
+        let tree = KDTree::new(points.as_ref());
 
         let q_same = make_query_point(points.row(0));
         let ids_r0 = tree.radius_search(&q_same, 0.0, DistanceMetric::Euclidean);
@@ -458,7 +458,7 @@ mod tests {
     #[test]
     fn negative_radius_returns_empty() {
         let points = random_points(10, 2, 44);
-        let tree = KDTree::new(&points);
+        let tree = KDTree::new(points.as_ref());
         let q = make_query_point(points.row(0));
         let out = tree.radius_search(&q, -0.1, DistanceMetric::Euclidean);
         assert!(out.is_empty());
@@ -473,7 +473,7 @@ mod tests {
         points[(1, 0)] = 0.3;
         points[(1, 1)] = 0.7;
 
-        let tree = KDTree::new(&points);
+        let tree = KDTree::new(points.as_ref());
         let q = make_query_point(points.row(0));
         let out = tree.radius_search(&q, 0.0, DistanceMetric::Euclidean);
         // both should be at distance 0
@@ -483,7 +483,7 @@ mod tests {
     #[test]
     fn small_batch_random_queries_match_bruteforce() {
         let points = random_points(300, 3, 2025);
-        let tree = KDTree::new(&points);
+        let tree = KDTree::new(points.as_ref());
         let mut rng = StdRng::seed_from_u64(55);
 
         // choose 10 random queries and radii
@@ -504,7 +504,7 @@ mod tests {
     fn ids_are_valid_indices() {
         // sanity: every returned id must be a valid row index into the original matrix
         let points = random_points(200, 2, 77);
-        let tree = KDTree::new(&points);
+        let tree = KDTree::new(points.as_ref());
         let q = make_query_point(points.row(0));
         let ids = tree.radius_search(&q, 0.5, DistanceMetric::Euclidean);
         let set: HashSet<i32> = ids.into_iter().collect();

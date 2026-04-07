@@ -9,7 +9,7 @@
 /////////////////////////////////////////////////////////////////////////////////////////////
 
 use crate::{KernelFromParams, KernelParams};
-use faer::{Mat, RowRef};
+use faer::{Mat, MatRef, RowRef};
 use ferreus_bbfmm::{FmmParams, FmmTree as TypedFmmTree, KernelFunction};
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
@@ -193,7 +193,7 @@ where
 /// assert_eq!(extents, vec![0.5, -1.0, 3.0, 4.0]);
 /// ```
 #[inline(always)]
-pub fn get_pointarray_extents<T>(points: &Mat<T>) -> Vec<T>
+pub fn get_pointarray_extents<T>(points: MatRef<T>) -> Vec<T>
 where
     T: PartialOrd + Clone,
 {

@@ -57,11 +57,20 @@ pub fn ferreus_rbf(m: &Bound<'_, PyModule>) -> PyResult<()> {
         .getattr("modules")?
         .set_item("ferreus_rbf.interpolant_config", interp)?;
 
+    let isosurfacing = PyModule::new(m.py(), "isosurfacing")?;
+    isosurfacing.add_function(wrap_pyfunction!(python_bindings::surface_nets, &isosurfacing)?)?;
+    isosurfacing.add_function(wrap_pyfunction!(python_bindings::save_obj, &isosurfacing)?)?;
+
+    m.add_submodule(&isosurfacing)?;
+    m.py()
+        .import("sys")?
+        .getattr("modules")?
+        .set_item("ferreus_rbf.isosurfacing", isosurfacing)?;
+
     m.add_class::<python_bindings::RBFInterpolator>()?;
     m.add_class::<python_bindings::Coefficients>()?;
     m.add_class::<python_bindings::GlobalTrend>()?;
     m.add_class::<python_bindings::RBFTestFunctions>()?;
 
-    m.add_function(wrap_pyfunction!(python_bindings::save_obj, m)?)?;
     Ok(())
 }

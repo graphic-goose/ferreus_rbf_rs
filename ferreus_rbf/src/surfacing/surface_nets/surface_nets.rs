@@ -2,15 +2,17 @@
 //
 // Implements a surface-following Surface Nets algorithm for extracting isosurfaces from RBF fields.
 //
-// Created on: 15 Nov 2025     Author: Daniel Owen
+// Created on: 15 Nov 2025     Author: Daniel Owen 
 //
-// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License.
+// Copyright (c) 2025, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License. 
 //
 /////////////////////////////////////////////////////////////////////////////////////////////
 
-use crate::{progress::ProgressMsg, rbf::RBFInterpolator};
-use faer::{Mat, Row, RowRef, row, stats};
-use std::collections::{HashMap, HashSet};
+use crate::{
+    progress::{ProgressMsg, ProgressSink},
+};
+use faer::{Mat, MatRef, Row, RowRef, row, stats};
+use std::{collections::{HashMap, HashSet}, sync::Arc};
 
 const CUBE_CORNERS: [[i32; 3]; 8] = [
     [0, 0, 0],
@@ -79,8 +81,8 @@ fn is_inside_extent(point: &RowRef<f64>, min: &[f64], max: &[f64]) -> bool {
 }
 
 fn seed_points_to_unique_ijk_from_values(
-    seed_points: &Mat<f64>,
-    seed_values: &Mat<f64>,
+    seed_points: MatRef<f64>,
+    seed_values: MatRef<f64>,
     isovalue: f64,
     tol: f64,
     min_corner: &[f64],
@@ -139,17 +141,23 @@ fn neighbours_sharing_edge(
     }
 }
 
-fn get_cell_intersections(
-    rbfi: &mut RBFInterpolator,
-    resolution: &f64,
+fn get_cell_intersections<F>(
+    surface_fn: &mut F,
+    resolution: f64,
     min_corner: &[f64],
     max_corner: &[f64],
-    isovalue: &f64,
-) -> (
+    isovalue: f64,
+    seed_points: MatRef<f64>,
+    seed_values: MatRef<f64>
+) -> 
+(
     HashMap<(i32, i32, i32), Vec<(((i32, i32, i32), (i32, i32, i32)), usize)>>,
     HashMap<((i32, i32, i32), (i32, i32, i32)), Row<f64>>, // edge key -> world pos
     HashMap<(i32, i32, i32), f64>,                         // corner -> sdf value
-) {
+) 
+where 
+    F: FnMut(MatRef<f64>) -> Mat<f64>
+{
     let mut evaluated_corners: HashMap<(i32, i32, i32), f64> = HashMap::new();
     let mut active_cells = HashSet::new();
     let mut cell_intersections: HashMap<
@@ -160,12 +168,12 @@ fn get_cell_intersections(
         HashMap::new();
 
     let mut frontier = seed_points_to_unique_ijk_from_values(
-        &rbfi.points,
-        &rbfi.point_values,
-        *isovalue,
-        *resolution,
+        seed_points,
+        seed_values,
+        isovalue,
+        resolution,
         min_corner,
-        *resolution,
+        resolution,
     );
 
     while !frontier.is_empty() {
@@ -191,9 +199,9 @@ fn get_cell_intersections(
             for (i, corner) in unevaluated_corners.iter().enumerate() {
                 corner_array
                     .row_mut(i)
-                    .copy_from(world_from_ijk(corner, min_corner, *resolution));
+                    .copy_from(world_from_ijk(corner, min_corner, resolution));
             }
-            let values = rbfi.evaluate_targets(&corner_array);
+            let values = &surface_fn(corner_array.as_ref());
             for (corner, &val) in unevaluated_corners.iter().zip(values.col(0).iter()) {
                 evaluated_corners.insert(*corner, val);
             }
@@ -213,10 +221,10 @@ fn get_cell_intersections(
                     let v1 = corner_vals[i1];
                     let v2 = corner_vals[i2];
 
-                    if (v1 > *isovalue) != (v2 > *isovalue) {
+                    if (v1 > isovalue) != (v2 > isovalue) {
                         let key = (corner_a, corner_b);
                         let entry = edge_intersections.entry(key).or_insert_with(|| {
-                            let mut pt = world_from_ijk(&corner_a, min_corner, *resolution);
+                            let mut pt = world_from_ijk(&corner_a, min_corner, resolution);
                             let t = (isovalue - v1) / (v2 - v1);
                             pt[axis] += t * resolution;
                             pt
@@ -470,140 +478,202 @@ fn quads_to_faces(quads: Mat<usize>) -> Mat<usize> {
     faces
 }
 
-pub fn surface_nets(
-    extents: &Vec<f64>,
+/// Build isosurfaces using a surface-following, non-adaptive Surface Nets algorithm.
+///
+/// The sampling `resolution` controls grid density; choose it relative to the
+/// data scale and desired detail. Multiple `isovalues` may be provided; each
+/// produces a separate surface.
+///
+/// Seed cells are selected from samples within `resolution` of the isovalue.
+/// If no seeds are found for the given isovalue empty matrices will be returned.
+///
+/// ### Parameters
+/// - `extents`: evaluation domain `[minx, miny, minz, maxx, maxy, maxz]`.
+/// - `resolution`: grid step in world units.
+/// - `isovalue`: the scalar level to extract.
+///
+/// ### Returns
+/// `(vertices, faces)` where:
+/// - `vertices` is a `(V_i × 3)` matrix of vertex positions for the isosurface.
+/// - `faces` is an `(F_i × 3)` integer matrix of triangle vertex indices.
+///
+/// ### Notes
+/// - Only implemented in 3D.
+/// - The current isosurface extraction method does **not** guarantee
+///   manifold or valid meshes; surfaces may contain trifurcations or
+///   self-intersections and may not be suitable for downstream boolean
+///   operations.
+///
+/// ### Example
+/// ```
+/// use faer::{Mat, MatRef, mat};
+/// use ferreus_rbf::{isosurfacing::surface_nets};
+/// 
+/// // Define a function to evaluate an isosurface from
+/// // In this example we'll create a unit sphere
+/// pub fn sphere(pts: MatRef<'_, f64>) -> Mat<f64> {
+///     assert_eq!(pts.ncols(), 3, "sphere() expects pts to be N x 3");
+///
+///     Mat::<f64>::from_fn(pts.nrows(), 1, |r, _| {
+///         let row = pts.row(r);
+///         row.norm_l2() - 1.0
+///     })
+/// }
+/// 
+/// // Define the extents for the isosurfacer
+/// let extents = vec![-1.1, -1.1, -1.1, 1.1, 1.1, 1.1];
+///
+/// // Define the resolution to evaluate at
+/// let resolution = 0.1;
+///
+/// // Define some seed points on the isosurface
+/// let seed_points = mat![[1.0, 0.0, 0.0,], [-1.0, 0.0, 0.0],];
+///
+/// // Define the function values of the seed points
+/// let seed_values = mat![[0.0,], [0.0],];
+///
+/// // Define the isovalue at which to surface
+/// let isovalue = 0.0;
+///
+/// // Extract the isosurface
+/// let (verts, faces) = surface_nets(
+///     &extents,
+///     resolution,
+///     isovalue,
+///     &mut sphere,
+///     seed_points.as_ref(),
+///     seed_values.as_ref(),
+///     &None,
+/// );
+/// 
+/// assert_eq!(verts.nrows(), 1904);
+/// assert_eq!(faces.nrows(), 3804);
+/// ```
+pub fn surface_nets<F>(
+    extents: &[f64],
     resolution: f64,
-    isovalues: &Vec<f64>,
-    rbfi: &mut RBFInterpolator,
-) -> (Vec<Mat<f64>>, Vec<Mat<usize>>) {
-    let dimensions = rbfi.points.ncols();
-
-    let mut evaluator_extents = extents.clone();
-
-    evaluator_extents[0..dimensions]
-        .iter_mut()
-        .for_each(|val| *val -= resolution * 2.0);
-
-    evaluator_extents[dimensions..]
-        .iter_mut()
-        .for_each(|val| *val += resolution * 2.0);
-
-    rbfi.build_evaluator(Some(evaluator_extents));
+    isovalue: f64,
+    surface_fn: &mut F,
+    seed_points: MatRef<f64>,
+    seed_values: MatRef<f64>,
+    progress_callback: &Option<Arc<dyn ProgressSink>>,
+) -> (Mat<f64>, Mat<usize>) 
+where 
+    F: FnMut(MatRef<f64>) -> Mat<f64>
+{
+    let dimensions = 3usize;
 
     let (min_corner, max_corner) = extents.split_at(dimensions);
 
-    let mut all_isosurface_points = Vec::new();
-    let mut all_isosurface_faces = Vec::new();
-
-    for isovalue in isovalues {
-        if let Some(sink) = &rbfi.progress_callback {
-            sink.emit(ProgressMsg::SurfacingProgress {
-                isovalue: *isovalue,
-                stage: String::from("Calculating surface intersections"),
-                progress: 0.0,
-            });
-        }
-
-        let (cell_intersections, edge_intersections, evaluated_corners) =
-            get_cell_intersections(rbfi, &resolution, &min_corner, &max_corner, &isovalue);
-
-        // Store normals per edge intersection
-        let mut edge_normals: HashMap<((i32, i32, i32), (i32, i32, i32)), Row<f64>> =
-            HashMap::new();
-
-        // Build cell vertices with trilinear normals
-        let cell_vertices: HashMap<(i32, i32, i32), Row<f64>> = cell_intersections
-            .iter()
-            .map(|(key, intersections)| {
-                let num_rows = intersections.len();
-                let mut points = Mat::<f64>::zeros(num_rows, 3);
-
-                let normals_vec = {
-                    let edge_keys: Vec<_> = intersections.iter().map(|(ek, _axis)| *ek).collect();
-                    normals_from_intersections_in_cell(
-                        key,
-                        &edge_keys,
-                        &edge_intersections,
-                        &evaluated_corners,
-                        &min_corner,
-                        resolution,
-                    )
-                };
-
-                for (idx, (edge_key, _axis)) in intersections.iter().enumerate() {
-                    points
-                        .row_mut(idx)
-                        .copy_from(edge_intersections.get(edge_key).unwrap().cloned());
-
-                    // Stash/average normals per edge
-                    let n = &normals_vec[idx];
-                    match edge_normals.get_mut(edge_key) {
-                        Some(old) => {
-                            let nx = 0.5 * (old[0] + n[0]);
-                            let ny = 0.5 * (old[1] + n[1]);
-                            let nz = 0.5 * (old[2] + n[2]);
-                            let mut avg = row![nx, ny, nz];
-                            let len = avg.squared_norm_l2().sqrt();
-                            if len > f64::EPSILON {
-                                avg[0] /= len;
-                                avg[1] /= len;
-                                avg[2] /= len;
-                            } else {
-                                avg.fill(0.0);
-                            }
-                            *old = avg;
-                        }
-                        None => {
-                            edge_normals.insert(*edge_key, n.clone());
-                        }
-                    }
-                }
-
-                // pack normals
-                let mut normals = Mat::<f64>::zeros(num_rows, 3);
-                for (i, n) in normals_vec.iter().enumerate() {
-                    normals.row_mut(i).copy_from(n.clone());
-                }
-
-                let mut best_point = Row::<f64>::zeros(3);
-                stats::row_mean(
-                    best_point.as_mut(),
-                    points.as_ref(),
-                    stats::NanHandling::Ignore,
-                );
-                (key.clone(), Row::from_iter(best_point.iter().cloned()))
-            })
-            .collect();
-
-        if let Some(sink) = &rbfi.progress_callback {
-            sink.emit(ProgressMsg::SurfacingProgress {
-                isovalue: *isovalue,
-                stage: String::from("Building quads"),
-                progress: 0.8,
-            });
-        }
-        let (vertices, quads) = get_quads(cell_vertices, edge_intersections, &edge_normals);
-
-        if let Some(sink) = &rbfi.progress_callback {
-            sink.emit(ProgressMsg::SurfacingProgress {
-                isovalue: *isovalue,
-                stage: String::from("Building faces"),
-                progress: 0.9,
-            });
-        }
-
-        let faces = quads_to_faces(quads);
-        all_isosurface_faces.push(faces);
-        all_isosurface_points.push(vertices);
-
-        if let Some(sink) = &rbfi.progress_callback {
-            sink.emit(ProgressMsg::SurfacingProgress {
-                isovalue: *isovalue,
-                stage: String::from("Finished"),
-                progress: 1.0,
-            });
-        }
+    if let Some(sink) = &progress_callback {
+        sink.emit(ProgressMsg::SurfacingProgress {
+            isovalue: isovalue,
+            stage: String::from("Calculating surface intersections"),
+            progress: 0.0,
+        });
     }
 
-    (all_isosurface_points, all_isosurface_faces)
+    let (cell_intersections, edge_intersections, evaluated_corners) = get_cell_intersections(
+        surface_fn,
+        resolution,
+        &min_corner,
+        &max_corner,
+        isovalue,
+        seed_points,
+        seed_values,
+    );
+
+    // Store normals per edge intersection
+    let mut edge_normals: HashMap<((i32, i32, i32), (i32, i32, i32)), Row<f64>> =
+        HashMap::new();
+
+    // Build cell vertices with trilinear normals
+    let cell_vertices: HashMap<(i32, i32, i32), Row<f64>> = cell_intersections
+        .iter()
+        .map(|(key, intersections)| {
+            let num_rows = intersections.len();
+            let mut points = Mat::<f64>::zeros(num_rows, 3);
+
+            let normals_vec = {
+                let edge_keys: Vec<_> = intersections.iter().map(|(ek, _axis)| *ek).collect();
+                normals_from_intersections_in_cell(
+                    key,
+                    &edge_keys,
+                    &edge_intersections,
+                    &evaluated_corners,
+                    &min_corner,
+                    resolution,
+                )
+            };                
+
+            for (idx, (edge_key, _axis)) in intersections.iter().enumerate() {
+                points
+                    .row_mut(idx)
+                    .copy_from(edge_intersections.get(edge_key).unwrap().cloned());
+
+                // Stash/average normals per edge
+                let n = &normals_vec[idx];
+                match edge_normals.get_mut(edge_key) {
+                    Some(old) => {
+                        let nx = 0.5 * (old[0] + n[0]);
+                        let ny = 0.5 * (old[1] + n[1]);
+                        let nz = 0.5 * (old[2] + n[2]);
+                        let mut avg = row![nx, ny, nz];
+                        let len = avg.squared_norm_l2().sqrt();
+                        if len > f64::EPSILON {
+                            avg[0] /= len;
+                            avg[1] /= len;
+                            avg[2] /= len;
+                        } else {
+                            avg.fill(0.0);
+                        }
+                        *old = avg;
+                    }
+                    None => {
+                        edge_normals.insert(*edge_key, n.clone());
+                    }
+                }                    
+            }
+
+            // pack normals
+            let mut normals = Mat::<f64>::zeros(num_rows, 3);
+            for (i, n) in normals_vec.iter().enumerate() {
+                normals.row_mut(i).copy_from(n.clone());
+            }
+
+            let mut best_point = Row::<f64>::zeros(3);
+            stats::row_mean(best_point.as_mut(), points.as_ref(), stats::NanHandling::Ignore);
+            (key.clone(), Row::from_iter(best_point.iter().cloned()))
+        })
+        .collect();
+
+    if let Some(sink) = &progress_callback {
+        sink.emit(ProgressMsg::SurfacingProgress {
+            isovalue: isovalue,
+            stage: String::from("Building quads"),
+            progress: 0.8,
+        });
+    }
+    let (vertices, quads) = get_quads(cell_vertices, edge_intersections, &edge_normals);
+
+    if let Some(sink) = &progress_callback {
+        sink.emit(ProgressMsg::SurfacingProgress {
+            isovalue: isovalue,
+            stage: String::from("Building faces"),
+            progress: 0.9,
+        });
+    }
+
+    let faces = quads_to_faces(quads);
+
+    if let Some(sink) = &progress_callback {
+        sink.emit(ProgressMsg::SurfacingProgress {
+            isovalue: isovalue,
+            stage: String::from("Finished"),
+            progress: 1.0,
+        });
+    }
+
+    (vertices, faces)
+
 }

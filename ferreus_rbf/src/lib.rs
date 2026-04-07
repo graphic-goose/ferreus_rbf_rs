@@ -127,6 +127,11 @@ pub mod config;
 
 mod rbf_test_functions;
 
+/// Functions related to isosurfacing algorithms
+pub mod isosurfacing {
+    pub use crate::surfacing::{surfacing_io::save_obj, surface_nets::surface_nets::surface_nets};
+}
+
 pub use {
     common::{
         create_evaluation_grid, csv_to_point_arrays, generate_random_points, pad_and_snap_extents,
@@ -135,5 +140,4 @@ pub use {
     global_trend::GlobalTrend,
     rbf::{Coefficients, ModelIOError, RBFInterpolator, RBFInterpolatorBuilder},
     rbf_test_functions::RBFTestFunctions,
-    surfacing::surfacing_io::save_obj,
 };

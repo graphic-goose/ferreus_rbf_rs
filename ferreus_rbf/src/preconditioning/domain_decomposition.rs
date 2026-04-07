@@ -85,7 +85,7 @@ impl DDMTree {
             let overlapping_points =
                 ferreus_rbf_utils::select_mat_rows(&points, &root.overlapping_point_indices);
 
-            root.extents = ferreus_rbf_utils::get_pointarray_extents(&overlapping_points);
+            root.extents = ferreus_rbf_utils::get_pointarray_extents(overlapping_points.as_ref());
 
             let mut active_domains: VecDeque<Domain> = VecDeque::new();
 
@@ -101,7 +101,7 @@ impl DDMTree {
 
                 let current_points = ferreus_rbf_utils::select_mat_rows(&points, &current_indices);
                 let current_points_extents =
-                    ferreus_rbf_utils::get_pointarray_extents(&current_points);
+                    ferreus_rbf_utils::get_pointarray_extents(current_points.as_ref());
 
                 let axis_lengths: Vec<f64> = (0..dimensions as usize)
                     .into_iter()

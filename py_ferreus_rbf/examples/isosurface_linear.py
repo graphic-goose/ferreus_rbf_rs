@@ -1,10 +1,8 @@
 import numpy as np
 import pandas as pd
 from pathlib import Path
-from ferreus_rbf import (
-    RBFInterpolator,
-    save_obj,
-)
+from ferreus_rbf import RBFInterpolator
+from ferreus_rbf.isosurfacing import save_obj
 from ferreus_rbf.interpolant_config import (
     RBFKernelType,
     InterpolantSettings,

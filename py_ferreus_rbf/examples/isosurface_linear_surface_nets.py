@@ -2,13 +2,12 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 from ferreus_rbf import RBFInterpolator
-from ferreus_rbf.isosurfacing import save_obj
+from ferreus_rbf.isosurfacing import save_obj, surface_nets
 from ferreus_rbf.interpolant_config import (
     RBFKernelType,
     InterpolantSettings,
     FittingAccuracyType,
     FittingAccuracy,
-    SpheroidalOrder,
 )
 from ferreus_rbf.progress import (
     Progress,
@@ -60,20 +59,14 @@ extents = np.concatenate(
 )
 
 # Define the RBF kernel to use
-kernel_type = RBFKernelType.Spheroidal
-
-# Define the spheroidal interpolant parameters
-order = SpheroidalOrder.Three
-base_range = 50
-sill = 10
+kernel_type = RBFKernelType.Linear
 
 # Define the desired fitting accuracy
 fitting_accuracy = FittingAccuracy(0.01, FittingAccuracyType.Absolute)
 
 # Initialise an InterpolantSettings instance
 interpolant_settings = InterpolantSettings(
-    kernel_type, fitting_accuracy=fitting_accuracy,
-    spheroidal_order=order, base_range=base_range, total_sill=sill
+    kernel_type, fitting_accuracy=fitting_accuracy
 )
 
 # Create a callback to receive progress updates from the RBFInterpolator
@@ -87,13 +80,37 @@ rbfi = RBFInterpolator(
 # Define the sampling grid resolution for the surfacer
 resolution = 5
 
-# Define the isovalues at which to surface
-isovalues = [0]
+# When setting up the rbf evaluator for isosurfacing we need to add a buffer to the
+# extents of the evaluator so we don't end up trying to evaluate points outside the
+# extents of the evaluator.
+bbox_padding = 2
+evaluator_extents = np.hstack(
+    (
+        extents[:3] - resolution * (bbox_padding + 1),
+        extents[3:] + resolution * (bbox_padding + 1),
+    )
+)
 
-# Generate an isosurface
-all_verts, all_faces = rbfi.build_isosurfaces(extents, resolution, isovalues)
+# Build the RBF evaluator
+rbfi.build_evaluator(evaluator_extents)
+
+# Define the isosurfacing evaluation function to use the rbf evaluator
+isosurface_fn = lambda targets: rbfi.evaluate_targets(targets)
+
+# Define the isovalue at which to surface
+isovalue = 0.0
+
+# Extract the isosurface
+verts, faces = surface_nets(
+    extents,
+    resolution,
+    isovalue,
+    isosurface_fn,
+    source_points,
+    source_values,
+)
 
 # Save the isosurface out to an obj file
-surface_name = f"isosurface_spheroidal_{resolution}m"
+surface_name = f"isosurface_linear_{resolution}m"
 outpath = Path(f"{surface_name}.obj")
-save_obj(str(outpath), surface_name, all_verts[0], all_faces[0])
+save_obj(str(outpath), surface_name, verts, faces)

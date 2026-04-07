@@ -24,7 +24,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let target_points = create_evaluation_grid(&[(0.0, 1.0), (0.0, 1.0)], &[n, n]);
 
     // Evaluate the RBF at the target points
-    let _interpolated_values = rbfi.evaluate(&target_points);
+    let _interpolated_values = rbfi.evaluate(target_points.as_ref());
 
     Ok(())
 }

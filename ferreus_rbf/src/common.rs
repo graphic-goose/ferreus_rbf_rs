@@ -298,7 +298,7 @@ pub fn farthest_point_sampling(
 /// A tuple `(translation, scale)` where each is a per-dimension factor.
 pub fn get_cheb_cube_scaling_factors(point_locations: &Mat<f64>) -> (Vec<f64>, Vec<f64>) {
     let dimensions = point_locations.shape().1;
-    let extents = ferreus_rbf_utils::get_pointarray_extents(&point_locations);
+    let extents = ferreus_rbf_utils::get_pointarray_extents(point_locations.as_ref());
 
     let mut translation_factor: Vec<f64> = Vec::with_capacity(dimensions);
     let mut scale_factor: Vec<f64> = Vec::with_capacity(dimensions);

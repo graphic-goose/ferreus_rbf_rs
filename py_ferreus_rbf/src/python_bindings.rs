@@ -12,7 +12,7 @@ use faer::{Mat, MatRef};
 use faer_ext::IntoFaer;
 use ferreus_rbf::{self, config, interpolant_config};
 use numpy::{PyArray2, PyArrayMethods, PyReadonlyArray1, PyReadonlyArray2};
-use pyo3::exceptions::PyOSError;
+use pyo3::exceptions::{PyOSError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyList, PyType};
 use std::sync::Arc;
@@ -621,10 +621,10 @@ impl RBFInterpolator {
         py: Python<'py>,
         targets: PyReadonlyArray2<'_, f64>,
     ) -> Bound<'py, PyArray2<f64>> {
-        let target_mat = targets.into_faer().to_owned();
+        let target_mat = targets.into_faer();
 
         // Run the heavy work without the GIL
-        let result: Mat<f64> = py.detach(|| self.inner.evaluate(&target_mat));
+        let result: Mat<f64> = py.detach(|| self.inner.evaluate(target_mat));
 
         // Convert after we’ve got the GIL again
         mat_to_numpy(&result, py)
@@ -637,10 +637,10 @@ impl RBFInterpolator {
         py: Python<'py>,
         targets: PyReadonlyArray2<'_, f64>,
     ) -> (Bound<'py, PyArray2<f64>>, Bound<'py, PyArray2<f64>>) {
-        let target_mat = targets.into_faer().to_owned();
+        let target_mat = targets.into_faer();
 
         // Run the heavy work without the GIL
-        let (vals, grads) = py.detach(|| self.inner.evaluate_with_gradients(&target_mat));
+        let (vals, grads) = py.detach(|| self.inner.evaluate_with_gradients(target_mat));
 
         // Convert after we’ve got the GIL again
         (mat_to_numpy(&vals, py), mat_to_numpy(&grads, py))
@@ -679,8 +679,8 @@ impl RBFInterpolator {
         py: Python<'py>,
         targets: PyReadonlyArray2<'_, f64>,
     ) -> Bound<'py, PyArray2<f64>> {
-        let target_mat = targets.into_faer().to_owned();
-        let result: Mat<f64> = py.detach(|| self.inner.evaluate_targets(&target_mat));
+        let target_mat = targets.into_faer();
+        let result: Mat<f64> = py.detach(|| self.inner.evaluate_targets(target_mat));
         mat_to_numpy(&result, py)
     }
 
@@ -690,8 +690,8 @@ impl RBFInterpolator {
         py: Python<'py>,
         targets: PyReadonlyArray2<'_, f64>,
     ) -> (Bound<'py, PyArray2<f64>>, Bound<'py, PyArray2<f64>>) {
-        let target_mat = targets.into_faer().to_owned();
-        let (vals, grads) = py.detach(|| self.inner.evaluate_with_gradients(&target_mat));
+        let target_mat = targets.into_faer();
+        let (vals, grads) = py.detach(|| self.inner.evaluate_with_gradients(target_mat));
 
         // Convert after we’ve got the GIL again
         (mat_to_numpy(&vals, py), mat_to_numpy(&grads, py))
@@ -818,6 +818,96 @@ fn model_error_to_py(err: ferreus_rbf::ModelIOError) -> PyErr {
     }
 }
 
+#[pyfunction]
+#[pyo3(signature = (
+    extents,
+    resolution,
+    isovalue,
+    surface_fn,
+    seed_points,
+    seed_values,
+    *, 
+    progress_callback=None
+))]
+pub fn surface_nets<'py>(
+    py: Python<'py>,
+    extents: PyReadonlyArray1<'py, f64>,
+    resolution: f64,
+    isovalue: f64,
+    surface_fn: Py<PyAny>,
+    seed_points: PyReadonlyArray2<'_, f64>,
+    seed_values: PyReadonlyArray2<'_, f64>,
+    progress_callback: Option<Py<Progress>>,
+) -> PyResult<(Bound<'py, PyArray2<f64>>, Bound<'py, PyArray2<usize>>)> {
+    let extents_slice = extents.as_slice()?;
+    if extents_slice.len() != 6 {
+        return Err(PyValueError::new_err(
+            "extents must be length 6: [minx, miny, minz, maxx, maxy, maxz]",
+        ));
+    }
+
+    let seed_points_mat = seed_points.into_faer();
+    let seed_values_mat = seed_values.into_faer();
+
+    if seed_points_mat.ncols() != 3 {
+        return Err(PyValueError::new_err(
+            "seed_points must have shape (N, 3)",
+        ));
+    }
+    if seed_values_mat.ncols() != 1 {
+        return Err(PyValueError::new_err(
+            "seed_values must have shape (N, 1)",
+        ));
+    }
+    if seed_points_mat.nrows() != seed_values_mat.nrows() {
+        return Err(PyValueError::new_err(
+            "seed_points and seed_values must have the same number of rows",
+        ));
+    }
+
+    let progress_sink = progress_callback.map(|p| p.borrow(py).__clone_sink__());
+    let mut py_surface_fn = move |targets: MatRef<f64>| -> Mat<f64> {
+        Python::attach(|py| {
+            let targets_owned = targets.to_owned();
+            let targets_np = mat_to_numpy(&targets_owned, py);
+
+            let result_obj: Py<PyAny> = match surface_fn.call1(py, (targets_np,)) {
+                Ok(obj) => obj.into(),
+                Err(err) => {
+                    err.print(py);
+                    panic!("surface_fn callback raised an exception")
+                }
+            };
+
+            let result = numpy_to_matref::<f64>(py, &result_obj)
+                .expect("surface_fn must return a 1D or 2D float64 numpy array")
+                .to_owned();
+
+            if result.nrows() != targets.nrows() || result.ncols() != 1 {
+                panic!(
+                    "surface_fn must return shape (N, 1); got ({}, {})",
+                    result.nrows(),
+                    result.ncols()
+                );
+            }
+
+            result
+        })
+    };
+
+    let (verts, faces) = ferreus_rbf::isosurfacing::surface_nets(
+        extents_slice,
+        resolution,
+        isovalue,
+        &mut py_surface_fn,
+        seed_points_mat,
+        seed_values_mat,
+        &progress_sink,
+    );
+
+    Ok((mat_to_numpy(&verts, py), mat_to_numpy(&faces, py)))
+}
+
 /// Save an isosurface to an obj
 #[pyfunction]
 pub fn save_obj(
@@ -834,7 +924,7 @@ pub fn save_obj(
         pyo3::exceptions::PyTypeError::new_err("Expected a 1D/2D int array for faces")
     })?;
 
-    ferreus_rbf::save_obj(path, name, verts_mat, faces_mat)?;
+    ferreus_rbf::isosurfacing::save_obj(path, name, verts_mat, faces_mat)?;
 
     Ok(())
 }

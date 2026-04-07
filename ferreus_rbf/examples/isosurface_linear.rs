@@ -16,7 +16,7 @@ use ferreus_rbf::{
         FittingAccuracy, FittingAccuracyType, InterpolantSettings, RBFKernelType,
     },
     progress::{ProgressMsg, ProgressSink, closure_sink},
-    save_obj,
+    isosurfacing::save_obj,
 };
 use ferreus_rbf_utils;
 use std::{env, sync::Arc};
@@ -81,7 +81,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Get the axis aligned bounding box extents of the source points
     // to use for the isosurface extraction
-    let source_point_extents = ferreus_rbf_utils::get_pointarray_extents(&source_points);
+    let source_point_extents = ferreus_rbf_utils::get_pointarray_extents(source_points.as_ref());
 
     // Define the RBF kernel to use
     let kernel_type = RBFKernelType::Linear;

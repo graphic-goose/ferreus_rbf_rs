@@ -337,7 +337,7 @@ impl RBFInterpolator {
         });
 
         let (mut unique_points, unique_point_values) = if params.test_unique {
-            let idx = remove_duplicates(&points, &interpolant_settings);
+            let idx = remove_duplicates(points.as_ref(), &interpolant_settings);
 
             if idx.len() == points.nrows() {
                 (points, point_values)
@@ -605,12 +605,14 @@ impl RBFInterpolator {
 
                 let corner_mat = bounding_box_corners(mins, maxs);
                 let transformed = gt.transform_points(corner_mat.as_ref());
-                evaluator_extents = Some(ferreus_rbf_utils::get_pointarray_extents(&transformed));
+                evaluator_extents = Some(ferreus_rbf_utils::get_pointarray_extents(
+                    transformed.as_ref(),
+                ));
             }
         }
 
         if evaluator_extents.is_none() {
-            evaluator_extents = Some(ferreus_rbf_utils::get_pointarray_extents(&points));
+            evaluator_extents = Some(ferreus_rbf_utils::get_pointarray_extents(points.as_ref()));
         }
 
         let tree = FmmTree::new(
@@ -626,8 +628,8 @@ impl RBFInterpolator {
         tree
     }
 
-    fn _get_evaluator_union_extents(&self, target_points: &Mat<f64>) -> Vec<f64> {
-        let source_extents = ferreus_rbf_utils::get_pointarray_extents(&self.points);
+    fn _get_evaluator_union_extents(&self, target_points: MatRef<f64>) -> Vec<f64> {
+        let source_extents = ferreus_rbf_utils::get_pointarray_extents(self.points.as_ref());
         let target_extents = ferreus_rbf_utils::get_pointarray_extents(target_points);
 
         let combined_extents = union_extents(&source_extents, &target_extents);
@@ -655,13 +657,13 @@ impl RBFInterpolator {
     /// # use ferreus_rbf::RBFInterpolator;
     /// # use faer::Mat;
     /// # let (rbfi, targets): (RBFInterpolator, Mat<f64>) = unimplemented!();
-    /// let values = rbfi.evaluate(&targets);
+    /// let values = rbfi.evaluate(targets.as_ref());
     /// ```
-    pub fn evaluate(&self, target_points: &Mat<f64>) -> Mat<f64> {
+    pub fn evaluate(&self, target_points: MatRef<f64>) -> Mat<f64> {
         let adaptive = true;
         let sparse = false;
 
-        let extents = self._get_evaluator_union_extents(&target_points);
+        let extents = self._get_evaluator_union_extents(target_points);
 
         let mut tree = self._setup_fmmtree(adaptive, sparse, Some(extents));
 
@@ -707,13 +709,13 @@ impl RBFInterpolator {
     /// # use ferreus_rbf::RBFInterpolator;
     /// # use faer::Mat;
     /// # let (rbfi, targets): (RBFInterpolator, Mat<f64>) = unimplemented!();
-    /// let (values, gradients) = rbfi.evaluate_with_gradients(&targets);
+    /// let (values, gradients) = rbfi.evaluate_with_gradients(targets.as_ref());
     /// ```
-    pub fn evaluate_with_gradients(&self, target_points: &Mat<f64>) -> (Mat<f64>, Mat<f64>) {
+    pub fn evaluate_with_gradients(&self, target_points: MatRef<f64>) -> (Mat<f64>, Mat<f64>) {
         let adaptive = true;
         let sparse = false;
 
-        let extents = self._get_evaluator_union_extents(&target_points);
+        let extents = self._get_evaluator_union_extents(target_points);
 
         let mut tree = self._setup_fmmtree(adaptive, sparse, Some(extents));
 
@@ -758,7 +760,7 @@ impl RBFInterpolator {
     /// ```no_run
     /// # use ferreus_rbf::RBFInterpolator;
     /// # let rbfi: RBFInterpolator = unimplemented!();
-    /// // Check training residual with nugget restored
+    /// // Check solved system residuals with nugget restored
     /// let fitted = rbfi.evaluate_at_source(true);
     /// ```
     pub fn evaluate_at_source(&self, add_nugget: bool) -> Mat<f64> {
@@ -824,7 +826,7 @@ impl RBFInterpolator {
         self.evaluator = Some(tree);
     }
 
-    /// Evaluate using the **stored** evaluator built by [`RBFInterpolator::build_evaluator`].
+    /// Evaluate using the stored evaluator built by [`RBFInterpolator::build_evaluator`].
     ///
     /// This is the fast path for repeated calls. If a `global_trend` is present,
     /// target points are transformed consistently with the stored evaluator.
@@ -840,9 +842,9 @@ impl RBFInterpolator {
     /// # use faer::Mat;
     /// # let (mut rbfi, targets): (RBFInterpolator, Mat<f64>) = unimplemented!();
     /// rbfi.build_evaluator(None);
-    /// let values = rbfi.evaluate_targets(&targets);
+    /// let values = rbfi.evaluate_targets(targets.as_ref());
     /// ```
-    pub fn evaluate_targets(&mut self, target_points: &Mat<f64>) -> Mat<f64> {
+    pub fn evaluate_targets(&mut self, target_points: MatRef<f64>) -> Mat<f64> {
         let mut tree = self.evaluator.as_mut().unwrap();
 
         let evaluator_params = EvaluatorParams {
@@ -864,7 +866,7 @@ impl RBFInterpolator {
         interpolated_values
     }
 
-    /// Evaluate the interpolant values and gradients using the **stored** evaluator built by [`RBFInterpolator::build_evaluator`].
+    /// Evaluate the interpolant values and gradients using the stored evaluator built by [`RBFInterpolator::build_evaluator`].
     ///
     /// This is the fast path for repeated calls. If a `global_trend` is present,
     /// target points are transformed consistently with the stored evaluator.
@@ -880,11 +882,11 @@ impl RBFInterpolator {
     /// # use faer::Mat;
     /// # let (mut rbfi, targets): (RBFInterpolator, Mat<f64>) = unimplemented!();
     /// rbfi.build_evaluator(None);
-    /// let (values, gradients) = rbfi.evaluate_targets_with_gradients(&targets);
+    /// let (values, gradients) = rbfi.evaluate_targets_with_gradients(targets.as_ref());
     /// ```
     pub fn evaluate_targets_with_gradients(
         &mut self,
-        target_points: &Mat<f64>,
+        target_points: MatRef<f64>,
     ) -> (Mat<f64>, Mat<f64>) {
         let mut tree = self.evaluator.as_mut().unwrap();
 
@@ -907,7 +909,7 @@ impl RBFInterpolator {
         (interpolated_values, gradients.unwrap())
     }
 
-    /// Build isosurfaces using a **surface-following, non-adaptive Dual Contouring** pipeline.
+    /// Build isosurfaces using a surface-following, non-adaptive Surface Nets algorithm.
     ///
     /// The sampling `resolution` controls grid density; choose it relative to the
     /// data scale and desired detail. Multiple `isovalues` may be provided; each
@@ -950,8 +952,63 @@ impl RBFInterpolator {
         resolution: &f64,
         isovalues: &Vec<f64>,
     ) -> (Vec<Mat<f64>>, Vec<Mat<usize>>) {
-        let (all_isosurface_points, all_isosurface_faces) =
-            surface_nets::surface_nets(extents, *resolution, isovalues, self);
+        let dimensions = self.points.ncols();
+        assert_eq!(dimensions, 3usize, "Only supported for 3D isosurfacing");
+
+        let mut evaluator_extents = extents.clone();
+        evaluator_extents[0..dimensions]
+            .iter_mut()
+            .for_each(|val| *val -= resolution * 2.0);
+        evaluator_extents[dimensions..]
+            .iter_mut()
+            .for_each(|val| *val += resolution * 2.0);
+
+        self.build_evaluator(Some(evaluator_extents));
+
+        let coeffs = &self.coefficients;
+        let settings = &self.interpolant_settings;
+        let translation = &self.translation_factor;
+        let scale = &self.scale_factor;
+        let gt = &self.global_trend;
+
+        let tree = self.evaluator.as_mut().unwrap();
+
+        let mut surface_fn = move |targets: MatRef<f64>| {
+            let params = EvaluatorParams {
+                tree: &mut *tree,
+                target_points: targets,
+                coefficients: coeffs,
+                interpolant_settings: settings,
+                translation_factor: translation,
+                scale_factor: scale,
+                evaluate_gradients: false,
+                add_nugget: false,
+                global_trend: gt,
+                evaluator_mode: FmmEvaluatorMode::Leaves,
+            };
+            _evaluate(params).unwrap_or_else(panic_on_fmm_error).0
+        };
+
+        let progress_callback = &self.progress_callback;
+        let seed_points = &self.points;
+        let seed_values = &self.point_values;
+
+        let mut all_isosurface_points = Vec::new();
+        let mut all_isosurface_faces = Vec::new();
+
+        for val in isovalues {
+            let (verts, faces) = surface_nets::surface_nets(
+                extents,
+                *resolution,
+                *val,
+                &mut surface_fn,
+                seed_points.as_ref(),
+                seed_values.as_ref(),
+                progress_callback,
+            );
+            all_isosurface_points.push(verts);
+            all_isosurface_faces.push(faces);
+        }
 
         (all_isosurface_points, all_isosurface_faces)
     }
@@ -1316,9 +1373,12 @@ fn duplicate_cutoff_distance(h_ref: f64, interpolant_settings: &InterpolantSetti
 /// cutoff radius; only the first point in each group is kept.
 ///
 /// Returns: indices of unique points to keep.
-fn remove_duplicates(points: &Mat<f64>, interpolant_settings: &InterpolantSettings) -> Vec<usize> {
+fn remove_duplicates(
+    points: MatRef<f64>,
+    interpolant_settings: &InterpolantSettings,
+) -> Vec<usize> {
     let dims = points.ncols();
-    let extents = ferreus_rbf_utils::get_pointarray_extents(&points);
+    let extents = ferreus_rbf_utils::get_pointarray_extents(points);
     let mins = &extents[..dims];
     let maxs = &extents[dims..];
     let max_length = maxs
@@ -1329,7 +1389,7 @@ fn remove_duplicates(points: &Mat<f64>, interpolant_settings: &InterpolantSettin
 
     let scaled_tolerance = duplicate_cutoff_distance(max_length, &interpolant_settings);
 
-    let kdtree = KDTree::new(&points);
+    let kdtree = KDTree::new(points);
 
     let mut visited = HashSet::new();
     let mut unique_points = Vec::new();

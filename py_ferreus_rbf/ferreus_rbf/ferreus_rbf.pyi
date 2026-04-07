@@ -10,7 +10,7 @@
 /////////////////////////////////////////////////////////////////////////////////////////////
 '''
 
-from typing import Optional, Union
+from typing import Optional
 import numpy as np
 import numpy.typing as npt
 from ferreus_rbf.config import Params
@@ -792,24 +792,3 @@ class RBFInterpolator:
         """
         ...
 
-def save_obj(
-    path: str,
-    name: str,
-    verts: npt.NDArray[np.float64],
-    faces: Union[npt.NDArray[np.uintp], npt.NDArray[np.int64]],
-) -> None:
-    """
-    Save an isosurface to an OBJ file.
-
-    Parameters
-    ----------
-    path : str
-        Output `.obj` path.
-    name : str
-        Object name written as `o <name>` inside the OBJ.
-    verts : (V, 3) float64 ndarray
-        Vertex positions.
-    faces : (F, 3) uintp or int64 ndarray (0-based)
-        Triangle indices (0-based). Converted to OBJ's 1-based indices.
-    """
-    ...

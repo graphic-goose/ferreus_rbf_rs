@@ -103,6 +103,7 @@ nav:
   - Home: index.md
   - Examples:
       - Overview: examples.md
+      - Isosurface sphere: examples/isosurface_sphere.md
       - Franke's function 2D: examples/franke_2d.md
       - Isosurface linear: examples/isosurface_linear.md
       - Isosurface trend linear: examples/isosurface_trend_linear.md
@@ -127,7 +128,9 @@ nav:
         - FmmParams: api/FmmParams.md
         - FmmCompressionType: api/enums/FmmCompressionType.md
         - Solvers: api/enums/Solvers.md
+      - Isosurfacing:
+        - Surface Nets: api/surface_nets.md
+        - save_obj: api/save_obj.md
       - Progress & Events: api/progress.md
       - Utilities:
-        - save_obj: api/save_obj.md
         - RBFTestFunctions: api/RBFTestFunctions.md
