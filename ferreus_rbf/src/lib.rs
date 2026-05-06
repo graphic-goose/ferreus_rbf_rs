@@ -138,6 +138,6 @@ pub use {
         point_arrays_to_csv,
     },
     global_trend::GlobalTrend,
-    rbf::{Coefficients, ModelIOError, RBFInterpolator, RBFInterpolatorBuilder},
+    rbf::{Coefficients, ModelIOError, RBFInterpolator, RBFInterpolatorBuilder, get_unique_indices},
     rbf_test_functions::RBFTestFunctions,
 };

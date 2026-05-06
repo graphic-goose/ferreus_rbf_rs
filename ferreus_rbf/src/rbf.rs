@@ -337,7 +337,7 @@ impl RBFInterpolator {
         });
 
         let (mut unique_points, unique_point_values) = if params.test_unique {
-            let idx = remove_duplicates(points.as_ref(), &interpolant_settings);
+            let idx = get_unique_indices(points.as_ref(), &interpolant_settings);
 
             if idx.len() == points.nrows() {
                 (points, point_values)
@@ -1373,7 +1373,7 @@ fn duplicate_cutoff_distance(h_ref: f64, interpolant_settings: &InterpolantSetti
 /// cutoff radius; only the first point in each group is kept.
 ///
 /// Returns: indices of unique points to keep.
-fn remove_duplicates(
+pub fn get_unique_indices(
     points: MatRef<f64>,
     interpolant_settings: &InterpolantSettings,
 ) -> Vec<usize> {

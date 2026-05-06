@@ -71,6 +71,7 @@ pub fn ferreus_rbf(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<python_bindings::Coefficients>()?;
     m.add_class::<python_bindings::GlobalTrend>()?;
     m.add_class::<python_bindings::RBFTestFunctions>()?;
+    m.add_function(wrap_pyfunction!(python_bindings::get_unique_indices, m)?)?;
 
     Ok(())
 }

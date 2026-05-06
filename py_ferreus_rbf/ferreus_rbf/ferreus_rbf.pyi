@@ -792,3 +792,23 @@ class RBFInterpolator:
         """
         ...
 
+def get_unique_indices(
+    points: npt.NDArray[np.float64],
+    interpolant_settings: InterpolantSettings
+) -> npt.NDArray[np.uintp]:
+    """
+    Gets the unique indices from a list of points
+
+    Parameters
+    ----------
+    points : npt.NDArray[np.f64]
+        Input source points to get unique indices from.
+    interpolant_settings : InterpolantSettings
+            Settings used to configure the interpolator.
+
+    Returns
+    -------
+    npt.NDArray[np.uintp]
+        1D array of unique point indices into the input array.
+    """
+    ...

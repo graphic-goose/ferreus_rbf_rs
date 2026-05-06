@@ -11,7 +11,7 @@
 use faer::{Mat, MatRef};
 use faer_ext::IntoFaer;
 use ferreus_rbf::{self, config, interpolant_config};
-use numpy::{PyArray2, PyArrayMethods, PyReadonlyArray1, PyReadonlyArray2};
+use numpy::{IntoPyArray, PyArray1, PyArray2, PyArrayMethods, PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::exceptions::{PyOSError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyList, PyType};
@@ -927,6 +927,19 @@ pub fn save_obj(
     ferreus_rbf::isosurfacing::save_obj(path, name, verts_mat, faces_mat)?;
 
     Ok(())
+}
+
+/// Gets the unique indices from a list of points
+#[pyfunction]
+pub fn get_unique_indices<'py>(
+    py: Python<'py>,
+    points: PyReadonlyArray2<'_, f64>,
+    interpolant_settings: &InterpolantSettings
+) -> Bound<'py, PyArray1<usize>> {
+    let mat_points = points.into_faer().to_owned();
+    let settings = interpolant_settings.inner;
+    let unique_indices = ferreus_rbf::get_unique_indices(mat_points.as_ref(), &settings);
+    unique_indices.into_pyarray(py)
 }
 
 #[pyclass]
