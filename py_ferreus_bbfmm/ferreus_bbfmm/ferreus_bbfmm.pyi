@@ -152,6 +152,64 @@ class FmmKernelType(Enum):
         </div>
 
     """
+    WendlandsC2Rbf = 7
+    r"""
+    $$
+    \varphi(r) =
+    \begin{cases}
+        (1-r)^4 (4r + 1), & r < 1,\\
+        0, & r \ge 1
+    \end{cases}
+    $$
+    """
+
+    SphericalRbf = 8
+    r"""
+    $$
+    \varphi(r) =
+    \begin{cases}
+        1 - r\,(1.5 - 0.5\,r^2), & r < 1,\\
+        0, & r \ge 1
+    \end{cases}
+    $$
+    """
+
+    ExponentialRbf = 9
+    r"""
+    $$
+    \varphi(r) = e^{-3r}
+    $$
+    """
+
+    GaussianRbf = 10
+    r"""
+    $$
+    \varphi(r) = e^{-3r^2}
+    $$
+    """
+
+    Cubic2Rbf = 11
+    r"""
+    Cubic RBF kernel as defined by Chiles, Delfiner (1999).
+
+    $$
+    \varphi(r) =
+    \begin{cases}
+        1 - 7r^2 + 8.75\,r^3 - 3.5\,r^5 + 0.75\,r^7, & r < 1,\\
+        0, & r \ge 1
+    \end{cases}
+    $$
+    """
+
+    InverseMultiquadraticRbf = 12
+    r"""
+    Inverse Multiquadratic RBF kernel. Kernel decay is scaled to
+    approximately align with the other kernels via $\kappa_m = 6.5$.
+
+    $$
+    \varphi(r) = \frac{1}{\sqrt{1 + \kappa_m^2\,r^2}}
+    $$
+    """
 
 class SpheroidalOrder(Enum):
     """The implemented orders (alpha) for the spheroidal kernel.

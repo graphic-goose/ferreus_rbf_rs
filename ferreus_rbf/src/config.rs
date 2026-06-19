@@ -192,15 +192,13 @@ impl ParamsBuilder {
 
 /// Returns the default FMM interpolation order for the given kernel type.
 ///
-/// These defaults are based on empirical accuracy/performance trade-offs:
-/// - `Linear`: 7
-/// - `ThinPlateSpline`: 9
-/// - `Cubic`: 11
-/// - All others: 7
+/// These defaults are based on empirical accuracy/performance trade-offs
 fn get_default_fmm_interpolation_order(kernel_type: RBFKernelType) -> usize {
     match kernel_type {
-        RBFKernelType::Linear => 7,
         RBFKernelType::ThinPlateSpline => 9,
+        RBFKernelType::WendlandsC2 => 9,
+        RBFKernelType::Gaussian => 10,
+        RBFKernelType::Cubic2 => 10,
         RBFKernelType::Cubic => 11,
         _ => 7,
     }

@@ -436,6 +436,14 @@ macro_rules! for_each_kernel {
                 }
             }
 
+            /// Sets an optional progress callback for reporting evaluation progress.
+            #[inline]
+            pub fn set_progress_callback(&mut self, callback: Option<ferreus_bbfmm::ProgressCallback>) {
+                match self {
+                    $( Self::$V(t) => t.set_progress_callback(callback), )*
+                }
+            }
+
             /// Evaluates the FMM at the supplied target points.
             #[inline]
             pub fn evaluate(
@@ -564,6 +572,12 @@ for_each_kernel! {
         (Spheroidal5Rbf,     crate::kernels::Spheroidal5RbfKernel),
         (Spheroidal7Rbf,     crate::kernels::Spheroidal7RbfKernel),
         (Spheroidal9Rbf,     crate::kernels::Spheroidal9RbfKernel),
+        (WendlandsC2Rbf,           crate::kernels::WendlandsC2RbfKernel),
+        (SphericalRbf,             crate::kernels::SphericalRbfKernel),
+        (ExponentialRbf,           crate::kernels::ExponentialRbfKernel),
+        (GaussianRbf,              crate::kernels::GaussianRbfKernel),
+        (Cubic2Rbf,             crate::kernels::Cubic2RbfKernel),
+        (InverseMultiquadraticRbf, crate::kernels::InverseMultiquadraticRbfKernel),
         (Laplacian,          crate::kernels::LaplacianKernel),
         (OneOverR2,          crate::kernels::OneOverR2Kernel),
         (OneOverR4,          crate::kernels::OneOverR4Kernel),

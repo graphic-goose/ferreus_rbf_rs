@@ -174,6 +174,16 @@ pub struct DuplicatesRemoved {
 }
 
 #[pyclass]
+pub struct EvaluationProgress {
+    #[pyo3(get)]
+    pub evaluated: usize,
+    #[pyo3(get)]
+    pub total: usize,
+    #[pyo3(get)]
+    pub progress: f64,
+}
+
+#[pyclass]
 pub struct Message {
     #[pyo3(get)]
     pub message: String,
@@ -212,6 +222,11 @@ fn map_msg_to_py(py: Python<'_>, msg: ferreus_rbf::progress::ProgressMsg) -> Py<
         ferreus_rbf::progress::ProgressMsg::DuplicatesRemoved { num_duplicates } => {
             Py::new(py, DuplicatesRemoved { num_duplicates })
                 .expect("alloc DuplicatesRemoved")
+                .into()
+        }
+        ferreus_rbf::progress::ProgressMsg::EvaluationProgress { evaluated, total, progress } => {
+            Py::new(py, EvaluationProgress { evaluated, total, progress })
+                .expect("alloc EvaluationProgress")
                 .into()
         }
         ferreus_rbf::progress::ProgressMsg::Message { message } => Py::new(py, Message { message })
@@ -268,6 +283,12 @@ pub enum RBFKernelType {
     ThinPlateSpline,
     Cubic,
     Spheroidal,
+    WendlandsC2,
+    Spherical,
+    Exponential,
+    Gaussian,
+    Cubic2,
+    InverseMultiquadratic,
 }
 
 impl From<RBFKernelType> for interpolant_config::RBFKernelType {
@@ -277,6 +298,12 @@ impl From<RBFKernelType> for interpolant_config::RBFKernelType {
             RBFKernelType::ThinPlateSpline => interpolant_config::RBFKernelType::ThinPlateSpline,
             RBFKernelType::Cubic => interpolant_config::RBFKernelType::Cubic,
             RBFKernelType::Spheroidal => interpolant_config::RBFKernelType::Spheroidal,
+            RBFKernelType::WendlandsC2 => interpolant_config::RBFKernelType::WendlandsC2,
+            RBFKernelType::Spherical => interpolant_config::RBFKernelType::Spherical,
+            RBFKernelType::Exponential => interpolant_config::RBFKernelType::Exponential,
+            RBFKernelType::Gaussian => interpolant_config::RBFKernelType::Gaussian,
+            RBFKernelType::Cubic2 => interpolant_config::RBFKernelType::Cubic2,
+            RBFKernelType::InverseMultiquadratic => interpolant_config::RBFKernelType::InverseMultiquadratic,
         }
     }
 }
@@ -377,6 +404,7 @@ impl InterpolantSettings {
                         false => FittingAccuracy::default().inner,
                     }
                 },
+                var_contrib: 1.0,  // Temporary; can expose this to python side
             },
         })
     }

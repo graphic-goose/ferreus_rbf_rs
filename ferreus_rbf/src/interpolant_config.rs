@@ -35,10 +35,16 @@ pub enum Drift {
 #[doc = include_str!("../docs/kernel_types.md")]
 #[derive(Clone, Debug, Copy, Serialize, Deserialize, PartialEq)]
 pub enum RBFKernelType {
-    Linear,
-    ThinPlateSpline,
-    Cubic,
-    Spheroidal,
+    Linear,  // 0
+    ThinPlateSpline,  // 1
+    Cubic,  // 2
+    Spheroidal,  // 3
+    WendlandsC2,  // 4
+    Spherical,  // 5
+    Exponential,  // 6
+    Gaussian,  // 7
+    Cubic2,  // 8
+    InverseMultiquadratic  // 9
 }
 
 /// Returns the minimum required [`Drift`] for the provided [`RBFKernelType`]
@@ -48,6 +54,7 @@ pub fn get_min_drift(kernel: RBFKernelType) -> Drift {
         RBFKernelType::ThinPlateSpline => Drift::Linear,
         RBFKernelType::Cubic => Drift::Linear,
         RBFKernelType::Spheroidal => Drift::None,
+        _ => Drift::None
     }
 }
 
@@ -100,6 +107,7 @@ impl Default for FittingAccuracy {
 #[derive(Debug, Clone, Copy)]
 pub struct InterpolantSettingsBuilder {
     pub kernel_type: RBFKernelType,
+    pub var_contrib: f64,
     pub spheroidal_order: SpheroidalOrder,
     pub drift: Drift,
     pub nugget: f64,
@@ -113,6 +121,7 @@ impl InterpolantSettingsBuilder {
     fn new(kernel_type: RBFKernelType) -> Self {
         Self {
             kernel_type: kernel_type,
+            var_contrib: 1.0,
             spheroidal_order: SpheroidalOrder::Three,
             drift: get_min_drift(kernel_type),
             nugget: 0.0,
@@ -120,6 +129,12 @@ impl InterpolantSettingsBuilder {
             total_sill: 1.0,
             fitting_accuracy: FittingAccuracy::default(),
         }
+    }
+
+    /// Sets the kernel contribution. 
+    pub fn var_contrib(mut self, var_contrib: f64) -> Self {
+        self.var_contrib = var_contrib;
+        self
     }
 
     /// Sets the spheroidal order.
@@ -162,6 +177,7 @@ impl InterpolantSettingsBuilder {
     pub fn build(self) -> InterpolantSettings {
         InterpolantSettings {
             kernel_type: self.kernel_type,
+            var_contrib: self.var_contrib,
             spheroidal_order: self.spheroidal_order,
             drift: self.drift,
             nugget: self.nugget,
@@ -179,6 +195,9 @@ impl InterpolantSettingsBuilder {
 pub struct InterpolantSettings {
     /// The RBF kernel to use for interpolation.
     pub kernel_type: RBFKernelType,
+
+    /// The kernel contribution. 
+    pub var_contrib: f64,
 
     /// The spheroidal oder.
     pub spheroidal_order: SpheroidalOrder,
@@ -241,6 +260,7 @@ impl InterpolantSettings {
             RBFKernelType::ThinPlateSpline => 1,
             RBFKernelType::Cubic => 1,
             RBFKernelType::Spheroidal => -1,
+            _ => -1
         };
 
         match poly_degree >= min_degree {
@@ -283,10 +303,17 @@ impl From<InterpolantSettings> for KernelParams {
                         SpheroidalOrder::Seven => KernelType::Spheroidal7Rbf,
                         SpheroidalOrder::Nine => KernelType::Spheroidal9Rbf,
                     },
+                    RBFKernelType::WendlandsC2 => KernelType::WendlandsC2Rbf,
+                    RBFKernelType::Spherical => KernelType::SphericalRbf,
+                    RBFKernelType::Exponential => KernelType::ExponentialRbf,
+                    RBFKernelType::Gaussian => KernelType::GaussianRbf,
+                    RBFKernelType::Cubic2 => KernelType::Cubic2Rbf,
+                    RBFKernelType::InverseMultiquadratic => KernelType::InverseMultiquadraticRbf
                 }
             },
             base_range: v.base_range,
             total_sill: v.total_sill,
+            var_contrib: v.var_contrib,
         }
     }
 }

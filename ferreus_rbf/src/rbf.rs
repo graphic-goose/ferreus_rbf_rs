@@ -579,6 +579,95 @@ impl RBFInterpolator {
         }
     }
 
+    /// Creates an [`RBFInterpolator`] from pre-solved coefficients.
+    ///
+    /// Use this when you already have solved RBF coefficients (e.g., from a
+    /// previous 'build' or external source) and want to perform evaluation
+    /// without re-solving the system.
+    ///
+    /// ### Parameters
+    /// - `points`: Coordinates of the data points used to solve the system.
+    /// - `coefficients`: Pre-solved [`Coefficients`] containing point and
+    ///   optional polynomial coefficients.
+    /// - `interpolant_settings`: Configuration of the RBF kernel, must match
+    ///   the settings used when solving.
+    /// - `params`: Optional solver/algorithm parameters (used for thread pool
+    ///   configuration during evaluation).
+    /// - `progress_callback`: Optional callback for reporting progress.
+    /// - `target_extents`: Optional target domain extents to use for building
+    ///   the evaluator. If provided, the evaluator will be built with the union
+    ///   of source point extents and target extents. Format: 
+    ///   `[x_min, y_min, z_min, x_max, y_max, z_max]`.
+    /// ```
+    pub fn from_coefficients(
+        points: Mat<f64>,
+        coefficients: Coefficients,
+        interpolant_settings: InterpolantSettings,
+        params: Option<Params>,
+        progress_callback: Option<Arc<dyn ProgressSink>>,
+        target_extents: Option<Vec<f64>>,
+    ) -> Self {
+        let dimensions = points.ncols();
+
+        assert!(
+            (1..=3).contains(&dimensions),
+            "Unsupported number of dimensions: {}",
+            dimensions
+        );
+
+        let interpolant_settings = Arc::new({
+            let mut ks = interpolant_settings;
+            ks.set_basis_size(&dimensions);
+            ks
+        });
+
+        let params = params.unwrap_or_else(|| {
+            Params::builder(interpolant_settings.kernel_type).build()
+        });
+
+        // Compute scaling factors for polynomial evaluation if needed
+        let (translation_factor, scale_factor) = if interpolant_settings.basis_size != 0 {
+            common::get_cheb_cube_scaling_factors(&points)
+        } else {
+            (Vec::default(), Vec::default())
+        };
+
+        let mut interpolator = Self {
+            points,
+            point_values: Mat::<f64>::new(), // Empty - not needed for evaluation only
+            coefficients,
+            interpolant_settings,
+            translation_factor,
+            scale_factor,
+            params,
+            evaluator: None,
+            global_trend: None,
+            progress_callback,
+        };
+
+        // If target extents are provided, build evaluator with union of source and target extents
+        if let Some(target_ext) = target_extents {
+            let source_extents = ferreus_rbf_utils::get_pointarray_extents(interpolator.points.as_ref());
+            let combined_extents = union_extents(&source_extents, &target_ext);
+            interpolator.build_evaluator(Some(combined_extents));
+        }
+
+        interpolator
+    }
+
+    /// Sets the progress callback for reporting solver and evaluation progress.
+    ///
+    /// # Arguments
+    /// * `callback` - Optional callback for reporting progress. Pass `None` to disable.
+    pub fn set_progress_callback(&mut self, callback: Option<Arc<dyn ProgressSink>>) {
+        self.progress_callback = callback;
+    }
+
+    /// Returns a clone of the current progress callback.
+    pub fn get_progress_callback(&self) -> Option<Arc<dyn ProgressSink>> {
+        self.progress_callback.clone()
+    }
+
     #[doc(hidden)]
     #[inline(always)]
     /// Internal: build and configure an FMM evaluator for this interpolator.
@@ -846,6 +935,14 @@ impl RBFInterpolator {
     /// ```
     pub fn evaluate_targets(&mut self, target_points: MatRef<f64>) -> Mat<f64> {
         let mut tree = self.evaluator.as_mut().unwrap();
+
+        // Set up progress callback on the FMM tree
+        if let Some(sink) = &self.progress_callback {
+            let sink = sink.clone();
+            tree.set_progress_callback(Some(std::sync::Arc::new(move |evaluated, total, progress| {
+                sink.emit(ProgressMsg::EvaluationProgress { evaluated, total, progress });
+            })));
+        }
 
         let evaluator_params = EvaluatorParams {
             tree: &mut tree,

@@ -318,6 +318,6 @@ mod utils;
 
 #[doc(inline)]
 pub use {
-    bbfmm::{FmmError, FmmParams, FmmTree, M2LCompressionType},
+    bbfmm::{FmmError, FmmParams, FmmTree, M2LCompressionType, ProgressCallback},
     traits::KernelFunction,
 };

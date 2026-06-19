@@ -45,6 +45,23 @@ class SurfacingProgress:
     stage: str
     progress: float
 
+class EvaluationProgress:
+    """
+    Event indicating progress for target evaluation.
+
+    Attributes
+    ----------
+    evaluated : int
+        Number of target points evaluated so far.
+    total : int
+        Total number of target points to evaluate.
+    progress : float
+        Fraction in ``[0, 1]`` indicating overall progress.
+    """
+    evaluated: int
+    total: int
+    progress: float
+
 class Message:
     """
     Arbitrary informational message.
@@ -56,7 +73,7 @@ class Message:
     """    
     message: str
 
-ProgressEvent = Union[SolverIteration, DuplicatesRemoved, SurfacingProgress, Message]
+ProgressEvent = Union[SolverIteration, DuplicatesRemoved, SurfacingProgress, EvaluationProgress, Message]
 """Union of all progress event payloads passed to :class:`Progress` callbacks."""
 
 ProgressCallback = Callable[[ProgressEvent], None]
