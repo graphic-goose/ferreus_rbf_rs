@@ -42,6 +42,18 @@ fn get_callback_sink() -> Arc<dyn ProgressSink> {
                 progress * 100.0
             );
         }
+        ProgressMsg::EvaluationProgress {
+            evaluated,
+            total,
+            progress,
+        } => {
+            println!(
+                "Evaluating: {:>6} / {:>6}    {:>.1}%",
+                evaluated,
+                total,
+                progress * 100.0
+            );
+        }
         ProgressMsg::SurfacingProgress {
             isovalue,
             stage,

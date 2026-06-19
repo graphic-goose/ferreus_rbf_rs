@@ -14,6 +14,11 @@ use faer::{Mat, MatRef};
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::fmt::{self, Debug};
+use std::sync::{Arc, Mutex, atomic::{AtomicUsize, Ordering}};
+
+/// Callback type for reporting evaluation progress.
+/// Parameters: (evaluated_count, total_count, progress_fraction)
+pub type ProgressCallback = Arc<dyn Fn(usize, usize, f64) + Send + Sync>;
 
 /// Errors that can occur during FMM tree operations.
 #[derive(Debug)]
@@ -190,7 +195,6 @@ pub struct PrecomputeOperators {
 /// It efficiently precomputes all operators (M2M and M2L) required for far-field approximation.
 ///
 /// The generic parameter `K` must implement [`KernelFunction`]
-#[derive(Debug)]
 pub struct FmmTree<K: KernelFunction> {
     /// Source point locations used to build the tree.
     ///
@@ -252,6 +256,16 @@ pub struct FmmTree<K: KernelFunction> {
 
     /// Tolerance for compression of M2L operators.
     epsilon: f64,
+
+    /// Optional callback for reporting evaluation progress.
+    progress_callback: Option<ProgressCallback>,
+}
+
+/// Handle derive debug for FMMTree with ProgressCallback conflict
+impl<K: KernelFunction + Debug> Debug for FmmTree<K> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("FmmTree").finish_non_exhaustive()
+    }
 }
 
 impl<K: KernelFunction + Send + Sync> FmmTree<K> {
@@ -345,6 +359,7 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
             compression_type: fmm_params.compression_type,
             eval_chunk_size: fmm_params.eval_chunk_size,
             epsilon: fmm_params.epsilon,
+            progress_callback: None,
         };
 
         Self::build_tree(&mut tree);
@@ -398,6 +413,13 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
             .collect();
 
         self.upward_pass(&weights, &cells_with_sources);
+    }
+
+    /// Sets an optional progress callback for reporting evaluation progress.
+    ///
+    /// The callback receives (evaluated_count, total_count, progress_fraction).
+    pub fn set_progress_callback(&mut self, callback: Option<ProgressCallback>) {
+        self.progress_callback = callback;
     }
 
     /// Performs a downward pass of the tree to set the local coefficients and
@@ -1093,6 +1115,11 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
         target_values_ref: MatRef<f64>,
         target_gradients_ref: Option<MatRef<f64>>,
     ) {
+        let total_targets = target_points.nrows();
+        let evaluated = AtomicUsize::new(0);
+        let progress_callback = &self.progress_callback;
+        let progress_mutex = Mutex::new(());
+
         self.tree_lists
             .leaf_target_indices
             .par_iter()
@@ -1131,6 +1158,15 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
                     target_values_ref,
                     target_gradients_ref,
                 );
+
+                // Report progress
+                if let Some(cb) = progress_callback {
+                    let count = evaluated.fetch_add(leaf_target_indices.len(), Ordering::Relaxed)
+                        + leaf_target_indices.len();
+                    let progress = count as f64 / total_targets as f64;
+                    let _guard = progress_mutex.lock().unwrap();
+                    cb(count, total_targets, progress);
+                }
             });
     }
 

@@ -33,6 +33,7 @@ pub fn ferreus_rbf(m: &Bound<'_, PyModule>) -> PyResult<()> {
     prog.add_class::<python_bindings::DuplicatesRemoved>()?;
     prog.add_class::<python_bindings::SolverIteration>()?;
     prog.add_class::<python_bindings::SurfacingProgress>()?;
+    prog.add_class::<python_bindings::EvaluationProgress>()?;
     prog.add_class::<python_bindings::Message>()?;
     prog.add_class::<python_bindings::ProgressEvent>()?;
     prog.add_class::<python_bindings::Progress>()?;

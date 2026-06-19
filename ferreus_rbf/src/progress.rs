@@ -34,6 +34,13 @@ pub enum ProgressMsg {
         progress: f64,
     },
 
+    /// Event indicating progress for target evaluation.
+    EvaluationProgress { 
+        evaluated: usize, 
+        total: usize, 
+        progress: f64 
+    },
+
     /// Arbitrary informational message.
     Message { message: String },
 }
