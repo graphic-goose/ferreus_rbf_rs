@@ -20,18 +20,18 @@ interpolation on millions of points in up to three dimensions.
 
 ## Crates and packages
 
-- `ferreus_rbf`: Fast, memory‑efficient global RBF interpolation in 1D, 2D and 3D,
+- `ferreus_rbf` - Fast, memory‑efficient global RBF interpolation in 1D, 2D and 3D,
   using domain decomposition and FGMRES with an FMM‑based evaluator.
-- `ferreus_bbfmm`: Parallel black box fast multipole method (BBFMM) implementation
+- `ferreus_bbfmm` - Parallel black box fast multipole method (BBFMM) implementation
   for smooth kernels in 1D, 2D and 3D, supporting adaptive trees and multiple RHS.
-- `ferreus_rbf_utils`: Shared kernels, tree utilities and helper functions used by
+- `ferreus_rbf_utils` - Shared kernels, tree utilities and helper functions used by
   `ferreus_rbf`, `ferreus_bbfmm` and the Python bindings.
-- `ferreus_rmt`: Fast isosurface extraction using regularised marching tetrahedra. 
-- `py_ferreus_rbf`: Python bindings for `ferreus_rbf`, providing a high‑level API for
+- `ferreus_rmt` - Fast isosurface extraction using regularised marching tetrahedra. 
+- `py_ferreus_rbf` - Python bindings for `ferreus_rbf`, providing a high‑level API for
   fast global RBF interpolation from Python.
-- `py_ferreus_bbfmm`: Python bindings for `ferreus_bbfmm`, exposing fast kernel
+- `py_ferreus_bbfmm` - Python bindings for `ferreus_bbfmm`, exposing fast kernel
   matrix–vector products and related FMM functionality to Python.
-- `py_ferreus_rmt`: Python bindings for `ferreus_rmt`, allowing fast surface-following
+- `py_ferreus_rmt` - Python bindings for `ferreus_rmt`, allowing fast surface-following
   isosurface extraction with regularised marching tetrahedra in Python.
 
 For more detailed API documentation and examples, see the individual crate and
