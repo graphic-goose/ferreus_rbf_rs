@@ -81,7 +81,7 @@ mesh = build_isosurface(
 mesh.save_obj("sphere.obj", "sphere")
 ```
 <!-- --8<-- [end:home-before-image] -->
-![Implicit sphere isosurface](docs/assets/images/isosurface_sphere.png)
+![Implicit sphere isosurface](https://raw.githubusercontent.com/graphic-goose/ferreus_rbf_rs/main/py_ferreus_rmt/docs/assets/images/isosurface_sphere.png)
 <!-- --8<-- [start:home-after-image] -->
 
 ---
