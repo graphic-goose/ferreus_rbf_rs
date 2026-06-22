@@ -32,7 +32,7 @@ X, Y = np.meshgrid(x_coords, y_coords)
 target_points = np.column_stack((X.ravel(), Y.ravel()))
 
 # Evaluate the RBF at the target points
-Z = rbfi.evaluate(target_points)[:, 0].reshape(n, n)
+Z = rbfi.evaluate(target_points).reshape(n, n)
 
 # Plot a surface of the evaluated values
 fig = plt.figure(figsize=(8, 6))

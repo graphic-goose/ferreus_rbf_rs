@@ -2,7 +2,7 @@ site_name: "ferreus_rbf"
 site_url: "https://graphic-goose.github.io/ferreus_rbf_rs/ferreus_rbf/"
 
 theme:
-  name: material
+  variant: classic
 
   features:
     - navigation.tabs
@@ -61,6 +61,7 @@ plugins:
           show_source: false
           show_root_heading: true
           show_symbol_type_toc: true
+          signature_crossrefs: true
           docstring_section_style: table
           merge_init_into_class: true
           extra:
@@ -103,12 +104,13 @@ nav:
   - Home: index.md
   - Examples:
       - Overview: examples.md
-      - Isosurface sphere: examples/isosurface_sphere.md
       - Franke's function 2D: examples/franke_2d.md
       - Isosurface linear: examples/isosurface_linear.md
       - Isosurface trend linear: examples/isosurface_trend_linear.md
       - Isosurface spheroidal: examples/isosurface_spheroidal.md
       - Isosurface spheroidal constant drift: examples/isosurface_spheroidal_drift.md
+      - Isosurface sphere: examples/isosurface_sphere.md
+      - Boundary closure: examples/boundary_closure.md
   - API:
       - Overview: api/index.md
       - Core:
@@ -129,8 +131,10 @@ nav:
         - FmmCompressionType: api/enums/FmmCompressionType.md
         - Solvers: api/enums/Solvers.md
       - Isosurfacing:
-        - Surface Nets: api/surface_nets.md
-        - save_obj: api/save_obj.md
+        - ClusterMethod: api/enums/ClusterMethod.md
+        - BoundaryClosure: api/enums/BoundaryClosure.md
+        - Mesh: api/Mesh.md
+        - Isosurface extraction: api/BuildIsosurface.md
       - Progress & Events: api/progress.md
       - Utilities:
         - RBFTestFunctions: api/RBFTestFunctions.md

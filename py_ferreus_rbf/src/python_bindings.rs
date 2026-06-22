@@ -11,7 +11,11 @@
 use faer::{Mat, MatRef};
 use faer_ext::IntoFaer;
 use ferreus_rbf::{self, config, interpolant_config};
-use numpy::{IntoPyArray, PyArray1, PyArray2, PyArrayMethods, PyReadonlyArray1, PyReadonlyArray2};
+use ferreus_rbf::{
+    isosurfacing::{BoundaryClosure as RbfBoundaryClosure, ClusterMethod as RbfClusterMethod},
+    progress::ProgressSinkExt,
+};
+use numpy::{PyArray1, PyArray2, PyArrayMethods, PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::exceptions::{PyOSError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyList, PyType};
@@ -36,6 +40,25 @@ where
     Err("Expected a 1D or 2D NumPy array of the requested dtype")
 }
 
+/// Convert a `faer::MatRef<T>` to a NumPy array.
+pub fn matref_to_numpy<'py, T>(mat: MatRef<'_, T>, py: Python<'py>) -> Bound<'py, PyArray2<T>>
+where
+    T: numpy::Element + Copy,
+{
+    let (nrows, ncols) = mat.shape();
+
+    let array = PyArray2::<T>::zeros(py, [nrows, ncols], false);
+    let mut slice_mut = unsafe { array.as_array_mut() };
+
+    for i in 0..nrows {
+        for j in 0..ncols {
+            slice_mut[[i, j]] = mat[(i, j)];
+        }
+    }
+
+    array
+}
+
 /// Convert a `faer::Mat<T>` to a NumPy array.
 pub fn mat_to_numpy<'py, T>(mat: &Mat<T>, py: Python<'py>) -> Bound<'py, PyArray2<T>>
 where
@@ -53,6 +76,118 @@ where
     }
 
     array
+}
+
+pub fn mat_to_numpy_scalar_or_matrix<'py, T>(mat: &Mat<T>, py: Python<'py>) -> Py<PyAny>
+where
+    T: numpy::Element + Copy,
+{
+    let (nrows, ncols) = mat.shape();
+
+    if ncols == 1 {
+        let array = PyArray1::<T>::zeros(py, nrows, false);
+        let mut slice_mut = unsafe { array.as_array_mut() };
+
+        for i in 0..nrows {
+            slice_mut[i] = *mat.get(i, 0);
+        }
+
+        return array.into_any().into();
+    }
+
+    mat_to_numpy(mat, py).into_any().into()
+}
+
+fn numpy_to_scalar_column<'py>(py: Python<'py>, obj: &'py Py<PyAny>, name: &str) -> Mat<f64> {
+    let result = numpy_to_matref::<f64>(py, obj)
+        .unwrap_or_else(|_| panic!("{name} must return a 1D or 2D float64 numpy array"))
+        .to_owned();
+
+    if result.ncols() != 1 {
+        panic!(
+            "{name} must return shape (N,) or (N, 1); got ({}, {})",
+            result.nrows(),
+            result.ncols()
+        );
+    }
+
+    result
+}
+
+fn numpy_to_value_matrix<'py>(
+    py: Python<'py>,
+    obj: &'py Py<PyAny>,
+    name: &str,
+) -> PyResult<Mat<f64>> {
+    numpy_to_matref::<f64>(py, obj)
+        .map(|mat| mat.to_owned())
+        .map_err(|_| PyValueError::new_err(format!("{name} must be a 1D or 2D float64 array")))
+}
+
+#[pyclass]
+pub struct Mesh {
+    inner: ferreus_rbf::isosurfacing::Mesh,
+}
+
+impl From<ferreus_rbf::isosurfacing::Mesh> for Mesh {
+    fn from(inner: ferreus_rbf::isosurfacing::Mesh) -> Self {
+        Self { inner }
+    }
+}
+
+#[pymethods]
+impl Mesh {
+    #[getter]
+    fn vertices<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
+        mat_to_numpy(&self.inner.vertices, py)
+    }
+
+    #[getter]
+    fn facets<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<usize>> {
+        mat_to_numpy(&self.inner.facets, py)
+    }
+
+    fn save_obj(&self, path: &str, name: &str) -> PyResult<()> {
+        self.inner.save_obj(path, name).map_err(PyOSError::new_err)
+    }
+}
+
+#[pyclass(eq, eq_int)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ClusterMethod {
+    #[pyo3(name = "None_")]
+    None,
+    Average,
+    CurvatureWeighted,
+}
+
+impl From<ClusterMethod> for RbfClusterMethod {
+    fn from(cluster: ClusterMethod) -> RbfClusterMethod {
+        match cluster {
+            ClusterMethod::None => RbfClusterMethod::None,
+            ClusterMethod::Average => RbfClusterMethod::Average,
+            ClusterMethod::CurvatureWeighted => RbfClusterMethod::CurvatureWeighted,
+        }
+    }
+}
+
+#[pyclass(eq, eq_int)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BoundaryClosure {
+    #[pyo3(name = "None_")]
+    None,
+    ClosePositive,
+    CloseNegative,
+}
+
+impl From<BoundaryClosure> for RbfBoundaryClosure {
+    fn from(closure: BoundaryClosure) -> RbfBoundaryClosure {
+        match closure {
+            BoundaryClosure::None => RbfBoundaryClosure::None,
+            BoundaryClosure::ClosePositive => RbfBoundaryClosure::ClosePositive,
+            BoundaryClosure::CloseNegative => RbfBoundaryClosure::CloseNegative,
+        }
+    }
 }
 
 #[pyclass(eq, eq_int)]
@@ -385,15 +520,15 @@ impl InterpolantSettings {
 #[pyclass(eq, eq_int)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FittingAccuracyType {
-    Absolute,
     Relative,
+    Absolute,
 }
 
 impl From<FittingAccuracyType> for interpolant_config::FittingAccuracyType {
     fn from(f: FittingAccuracyType) -> Self {
         match f {
-            FittingAccuracyType::Absolute => interpolant_config::FittingAccuracyType::Absolute,
             FittingAccuracyType::Relative => interpolant_config::FittingAccuracyType::Relative,
+            FittingAccuracyType::Absolute => interpolant_config::FittingAccuracyType::Absolute,
         }
     }
 }
@@ -578,14 +713,14 @@ impl RBFInterpolator {
     fn new(
         py: Python<'_>,
         points: PyReadonlyArray2<'_, f64>,
-        values: PyReadonlyArray2<'_, f64>,
+        values: Py<PyAny>,
         interpolant_settings: InterpolantSettings,
         params: Option<Params>,
         global_trend: Option<PyRef<GlobalTrend>>,
         progress_callback: Option<Py<Progress>>,
     ) -> PyResult<Self> {
         let points: Mat<f64> = points.into_faer().to_owned();
-        let values: Mat<f64> = values.into_faer().to_owned();
+        let values = numpy_to_value_matrix(py, &values, "values")?;
 
         let rbfib =
             ferreus_rbf::RBFInterpolator::builder(points, values, interpolant_settings.inner);
@@ -616,18 +751,14 @@ impl RBFInterpolator {
 
     /// Evaluates the interpolator at the given target points.
     #[pyo3(signature = (targets))]
-    fn evaluate<'py>(
-        &self,
-        py: Python<'py>,
-        targets: PyReadonlyArray2<'_, f64>,
-    ) -> Bound<'py, PyArray2<f64>> {
+    fn evaluate<'py>(&self, py: Python<'py>, targets: PyReadonlyArray2<'_, f64>) -> Py<PyAny> {
         let target_mat = targets.into_faer();
 
         // Run the heavy work without the GIL
         let result: Mat<f64> = py.detach(|| self.inner.evaluate(target_mat));
 
         // Convert after we’ve got the GIL again
-        mat_to_numpy(&result, py)
+        mat_to_numpy_scalar_or_matrix(&result, py)
     }
 
     /// Evaluates the interpolator and gradients at the given target points.
@@ -636,28 +767,27 @@ impl RBFInterpolator {
         &self,
         py: Python<'py>,
         targets: PyReadonlyArray2<'_, f64>,
-    ) -> (Bound<'py, PyArray2<f64>>, Bound<'py, PyArray2<f64>>) {
+    ) -> (Py<PyAny>, Bound<'py, PyArray2<f64>>) {
         let target_mat = targets.into_faer();
 
         // Run the heavy work without the GIL
         let (vals, grads) = py.detach(|| self.inner.evaluate_with_gradients(target_mat));
 
         // Convert after we’ve got the GIL again
-        (mat_to_numpy(&vals, py), mat_to_numpy(&grads, py))
+        (
+            mat_to_numpy_scalar_or_matrix(&vals, py),
+            mat_to_numpy(&grads, py),
+        )
     }
 
     /// Evaluates the interpolator at the source points.
     #[pyo3(signature = (*, add_nugget=false))]
-    fn evaluate_at_source<'py>(
-        &self,
-        py: Python<'py>,
-        add_nugget: bool,
-    ) -> Bound<'py, PyArray2<f64>> {
+    fn evaluate_at_source<'py>(&self, py: Python<'py>, add_nugget: bool) -> Py<PyAny> {
         // Run the heavy work without the GIL
         let result: Mat<f64> = py.detach(|| self.inner.evaluate_at_source(add_nugget));
 
         // Convert after we’ve got the GIL again
-        mat_to_numpy(&result, py)
+        mat_to_numpy_scalar_or_matrix(&result, py)
     }
 
     /// Builds the internal evaluator using an optional list of extents.
@@ -678,10 +808,10 @@ impl RBFInterpolator {
         &mut self,
         py: Python<'py>,
         targets: PyReadonlyArray2<'_, f64>,
-    ) -> Bound<'py, PyArray2<f64>> {
+    ) -> Py<PyAny> {
         let target_mat = targets.into_faer();
         let result: Mat<f64> = py.detach(|| self.inner.evaluate_targets(target_mat));
-        mat_to_numpy(&result, py)
+        mat_to_numpy_scalar_or_matrix(&result, py)
     }
 
     /// Evaluates the interpolator at the given target points using the pre-built evaluator.
@@ -689,35 +819,65 @@ impl RBFInterpolator {
         &mut self,
         py: Python<'py>,
         targets: PyReadonlyArray2<'_, f64>,
-    ) -> (Bound<'py, PyArray2<f64>>, Bound<'py, PyArray2<f64>>) {
+    ) -> (Py<PyAny>, Bound<'py, PyArray2<f64>>) {
         let target_mat = targets.into_faer();
         let (vals, grads) = py.detach(|| self.inner.evaluate_with_gradients(target_mat));
 
         // Convert after we’ve got the GIL again
-        (mat_to_numpy(&vals, py), mat_to_numpy(&grads, py))
+        (
+            mat_to_numpy_scalar_or_matrix(&vals, py),
+            mat_to_numpy(&grads, py),
+        )
     }
 
+    #[pyo3(signature = (extents, resolution, isovalue, boundary_closure=None))]
+    fn build_isosurface<'py>(
+        &mut self,
+        py: Python<'py>,
+        extents: PyReadonlyArray1<'py, f64>,
+        resolution: f64,
+        isovalue: f64,
+        boundary_closure: Option<BoundaryClosure>,
+    ) -> PyResult<Py<Mesh>> {
+        let extents_vec = extents.as_slice()?.to_vec();
+        let boundary_closure = boundary_closure
+            .map(RbfBoundaryClosure::from)
+            .unwrap_or(RbfBoundaryClosure::None);
+
+        let mesh = py.detach(|| {
+            self.inner
+                .build_isosurface(&extents_vec, resolution, isovalue, boundary_closure)
+        });
+
+        Py::new(py, Mesh::from(mesh))
+    }
+
+    #[pyo3(signature = (extents, resolution, isovalues, boundary_closure=None))]
     fn build_isosurfaces<'py>(
         &mut self,
         py: Python<'py>,
         extents: PyReadonlyArray1<'py, f64>,
         resolution: f64,
         isovalues: Vec<f64>,
-    ) -> PyResult<(Bound<'py, PyList>, Bound<'py, PyList>)> {
+        boundary_closure: Option<BoundaryClosure>,
+    ) -> PyResult<Bound<'py, PyList>> {
         let extents_vec = extents.as_slice()?.to_vec();
+        let boundary_closure = boundary_closure
+            .map(RbfBoundaryClosure::from)
+            .unwrap_or(RbfBoundaryClosure::None);
 
         // Heavy compute without GIL
-        let (all_pts, all_faces) = py.detach(|| {
+        let meshes = py.detach(|| {
             self.inner
-                .build_isosurfaces(&extents_vec, &resolution, &isovalues)
+                .build_isosurfaces(&extents_vec, resolution, &isovalues, boundary_closure)
         });
 
         // Convert once we’re back with the GIL
-        let vertex_arrays: Vec<_> = all_pts.iter().map(|m| mat_to_numpy(m, py)).collect();
-        let face_arrays: Vec<_> = all_faces.iter().map(|m| mat_to_numpy(m, py)).collect();
-        let py_vertices = PyList::new(py, &vertex_arrays)?;
-        let py_faces = PyList::new(py, &face_arrays)?;
-        Ok((py_vertices, py_faces))
+        let meshes: Vec<_> = meshes
+            .into_iter()
+            .map(|mesh| Py::new(py, Mesh::from(mesh)))
+            .collect::<PyResult<_>>()?;
+        PyList::new(py, meshes)
     }
 
     /// Save this interpolator to a JSON file.
@@ -763,9 +923,9 @@ impl RBFInterpolator {
 
     /// Access the stored source values from the interpolator
     #[getter]
-    fn source_values<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
+    fn source_values<'py>(&self, py: Python<'py>) -> Py<PyAny> {
         let values = &self.inner.point_values;
-        mat_to_numpy(&values, py)
+        mat_to_numpy_scalar_or_matrix(&values, py)
     }
 }
 
@@ -820,25 +980,29 @@ fn model_error_to_py(err: ferreus_rbf::ModelIOError) -> PyErr {
 
 #[pyfunction]
 #[pyo3(signature = (
+    seed_points,
     extents,
     resolution,
     isovalue,
-    surface_fn,
-    seed_points,
-    seed_values,
-    *, 
+    isosurface_fn,
+    *,
+    gradient_fn=None,
+    cluster_method=ClusterMethod::CurvatureWeighted,
+    boundary_closure=BoundaryClosure::None,
     progress_callback=None
 ))]
-pub fn surface_nets<'py>(
+pub fn build_isosurface<'py>(
     py: Python<'py>,
+    seed_points: PyReadonlyArray2<'_, f64>,
     extents: PyReadonlyArray1<'py, f64>,
     resolution: f64,
     isovalue: f64,
-    surface_fn: Py<PyAny>,
-    seed_points: PyReadonlyArray2<'_, f64>,
-    seed_values: PyReadonlyArray2<'_, f64>,
+    isosurface_fn: Py<PyAny>,
+    gradient_fn: Option<Py<PyAny>>,
+    cluster_method: Option<ClusterMethod>,
+    boundary_closure: Option<BoundaryClosure>,
     progress_callback: Option<Py<Progress>>,
-) -> PyResult<(Bound<'py, PyArray2<f64>>, Bound<'py, PyArray2<usize>>)> {
+) -> PyResult<Py<Mesh>> {
     let extents_slice = extents.as_slice()?;
     if extents_slice.len() != 6 {
         return Err(PyValueError::new_err(
@@ -847,31 +1011,20 @@ pub fn surface_nets<'py>(
     }
 
     let seed_points_mat = seed_points.into_faer();
-    let seed_values_mat = seed_values.into_faer();
 
     if seed_points_mat.ncols() != 3 {
-        return Err(PyValueError::new_err(
-            "seed_points must have shape (N, 3)",
-        ));
-    }
-    if seed_values_mat.ncols() != 1 {
-        return Err(PyValueError::new_err(
-            "seed_values must have shape (N, 1)",
-        ));
-    }
-    if seed_points_mat.nrows() != seed_values_mat.nrows() {
-        return Err(PyValueError::new_err(
-            "seed_points and seed_values must have the same number of rows",
-        ));
+        return Err(PyValueError::new_err("seed_points must have shape (N, 3)"));
     }
 
-    let progress_sink = progress_callback.map(|p| p.borrow(py).__clone_sink__());
+    let progress_sink =
+        progress_callback.map(|p| p.borrow(py).__clone_sink__().into_rmt_progress());
+
     let mut py_surface_fn = move |targets: MatRef<f64>| -> Mat<f64> {
         Python::attach(|py| {
             let targets_owned = targets.to_owned();
             let targets_np = mat_to_numpy(&targets_owned, py);
 
-            let result_obj: Py<PyAny> = match surface_fn.call1(py, (targets_np,)) {
+            let result_obj: Py<PyAny> = match isosurface_fn.call1(py, (targets_np,)) {
                 Ok(obj) => obj.into(),
                 Err(err) => {
                     err.print(py);
@@ -885,7 +1038,7 @@ pub fn surface_nets<'py>(
 
             if result.nrows() != targets.nrows() || result.ncols() != 1 {
                 panic!(
-                    "surface_fn must return shape (N, 1); got ({}, {})",
+                    "surface_fn must return shape (N,) or (N, 1); got ({}, {})",
                     result.nrows(),
                     result.ncols()
                 );
@@ -895,51 +1048,201 @@ pub fn surface_nets<'py>(
         })
     };
 
-    let (verts, faces) = ferreus_rbf::isosurfacing::surface_nets(
+    let mut py_gradient_fn = gradient_fn.map(|gradient_fn| {
+        move |targets: MatRef<f64>| -> (Mat<f64>, Mat<f64>) {
+            Python::attach(|py| {
+                let targets_np = matref_to_numpy(targets, py);
+
+                let result_obj: Py<PyAny> = match gradient_fn.call1(py, (targets_np,)) {
+                    Ok(obj) => obj.into(),
+                    Err(err) => {
+                        err.print(py);
+                        panic!("gradient_fn callback raised an exception")
+                    }
+                };
+
+                let (values_obj, gradients_obj): (Py<PyAny>, Py<PyAny>) = result_obj
+                    .extract(py)
+                    .expect("gradient_fn must return a tuple of (values, gradients)");
+
+                let values = numpy_to_scalar_column(py, &values_obj, "gradient_fn values");
+                let gradients = numpy_to_matref::<f64>(py, &gradients_obj)
+                    .expect("gradient_fn gradients must be a 2D float64 numpy array")
+                    .to_owned();
+
+                if values.nrows() != targets.nrows() {
+                    panic!(
+                        "gradient_fn values must return shape (N,) or (N, 1); got {} rows for {} targets",
+                        values.nrows(),
+                        targets.nrows()
+                    );
+                }
+                if gradients.nrows() != targets.nrows() || gradients.ncols() != 3 {
+                    panic!(
+                        "gradient_fn gradients must return shape (N, 3); got ({}, {})",
+                        gradients.nrows(),
+                        gradients.ncols()
+                    );
+                }
+
+                (values, gradients)
+            })
+        }
+    });
+
+    let gradient_fn_ref = py_gradient_fn
+        .as_mut()
+        .map(|f| f as &mut dyn FnMut(MatRef<f64>) -> (Mat<f64>, Mat<f64>));
+
+    let mesh = ferreus_rbf::isosurfacing::build_isosurface(
+        seed_points_mat,
         extents_slice,
         resolution,
         isovalue,
         &mut py_surface_fn,
-        seed_points_mat,
-        seed_values_mat,
-        &progress_sink,
+        gradient_fn_ref,
+        cluster_method.unwrap().into(),
+        boundary_closure.unwrap().into(),
+        progress_sink.as_deref(),
     );
 
-    Ok((mat_to_numpy(&verts, py), mat_to_numpy(&faces, py)))
+    Py::new(py, Mesh::from(mesh))
 }
 
-/// Save an isosurface to an obj
 #[pyfunction]
-pub fn save_obj(
-    py: Python,
-    path: &str,
-    name: &str,
-    verts: Py<PyAny>,
-    faces: Py<PyAny>,
-) -> PyResult<()> {
-    let verts_mat = numpy_to_matref::<f64>(py, &verts)
-        .map_err(|_| pyo3::exceptions::PyTypeError::new_err("Expected 1D/2D float64 for verts"))?;
-
-    let faces_mat = numpy_to_matref::<usize>(py, &faces).map_err(|_| {
-        pyo3::exceptions::PyTypeError::new_err("Expected a 1D/2D int array for faces")
-    })?;
-
-    ferreus_rbf::isosurfacing::save_obj(path, name, verts_mat, faces_mat)?;
-
-    Ok(())
-}
-
-/// Gets the unique indices from a list of points
-#[pyfunction]
-pub fn get_unique_indices<'py>(
+#[pyo3(signature = (
+    seed_points,
+    extents,
+    resolution,
+    isovalues,
+    isosurface_fn,
+    *,
+    gradient_fn=None,
+    cluster_method=ClusterMethod::CurvatureWeighted,
+    boundary_closure=BoundaryClosure::None,
+    progress_callback=None
+))]
+pub fn build_isosurfaces<'py>(
     py: Python<'py>,
-    points: PyReadonlyArray2<'_, f64>,
-    interpolant_settings: &InterpolantSettings
-) -> Bound<'py, PyArray1<usize>> {
-    let mat_points = points.into_faer().to_owned();
-    let settings = interpolant_settings.inner;
-    let unique_indices = ferreus_rbf::get_unique_indices(mat_points.as_ref(), &settings);
-    unique_indices.into_pyarray(py)
+    seed_points: PyReadonlyArray2<'_, f64>,
+    extents: PyReadonlyArray1<'py, f64>,
+    resolution: f64,
+    isovalues: Vec<f64>,
+    isosurface_fn: Py<PyAny>,
+    gradient_fn: Option<Py<PyAny>>,
+    cluster_method: Option<ClusterMethod>,
+    boundary_closure: Option<BoundaryClosure>,
+    progress_callback: Option<Py<Progress>>,
+) -> PyResult<Bound<'py, PyList>> {
+    let extents_slice = extents.as_slice()?;
+    if extents_slice.len() != 6 {
+        return Err(PyValueError::new_err(
+            "extents must be length 6: [minx, miny, minz, maxx, maxy, maxz]",
+        ));
+    }
+
+    let seed_points_mat = seed_points.into_faer();
+
+    if seed_points_mat.ncols() != 3 {
+        return Err(PyValueError::new_err("seed_points must have shape (N, 3)"));
+    }
+
+    let progress_sink =
+        progress_callback.map(|p| p.borrow(py).__clone_sink__().into_rmt_progress());
+
+    let mut py_surface_fn = move |targets: MatRef<f64>| -> Mat<f64> {
+        Python::attach(|py| {
+            let targets_owned = targets.to_owned();
+            let targets_np = mat_to_numpy(&targets_owned, py);
+
+            let result_obj: Py<PyAny> = match isosurface_fn.call1(py, (targets_np,)) {
+                Ok(obj) => obj.into(),
+                Err(err) => {
+                    err.print(py);
+                    panic!("surface_fn callback raised an exception")
+                }
+            };
+
+            let result = numpy_to_matref::<f64>(py, &result_obj)
+                .expect("surface_fn must return a 1D or 2D float64 numpy array")
+                .to_owned();
+
+            if result.nrows() != targets.nrows() || result.ncols() != 1 {
+                panic!(
+                    "surface_fn must return shape (N,) or (N, 1); got ({}, {})",
+                    result.nrows(),
+                    result.ncols()
+                );
+            }
+
+            result
+        })
+    };
+
+    let mut py_gradient_fn = gradient_fn.map(|gradient_fn| {
+        move |targets: MatRef<f64>| -> (Mat<f64>, Mat<f64>) {
+            Python::attach(|py| {
+                let targets_np = matref_to_numpy(targets, py);
+
+                let result_obj: Py<PyAny> = match gradient_fn.call1(py, (targets_np,)) {
+                    Ok(obj) => obj.into(),
+                    Err(err) => {
+                        err.print(py);
+                        panic!("gradient_fn callback raised an exception")
+                    }
+                };
+
+                let (values_obj, gradients_obj): (Py<PyAny>, Py<PyAny>) = result_obj
+                    .extract(py)
+                    .expect("gradient_fn must return a tuple of (values, gradients)");
+
+                let values = numpy_to_scalar_column(py, &values_obj, "gradient_fn values");
+                let gradients = numpy_to_matref::<f64>(py, &gradients_obj)
+                    .expect("gradient_fn gradients must be a 2D float64 numpy array")
+                    .to_owned();
+
+                if values.nrows() != targets.nrows() {
+                    panic!(
+                        "gradient_fn values must return shape (N,) or (N, 1); got {} rows for {} targets",
+                        values.nrows(),
+                        targets.nrows()
+                    );
+                }
+                if gradients.nrows() != targets.nrows() || gradients.ncols() != 3 {
+                    panic!(
+                        "gradient_fn gradients must return shape (N, 3); got ({}, {})",
+                        gradients.nrows(),
+                        gradients.ncols()
+                    );
+                }
+
+                (values, gradients)
+            })
+        }
+    });
+
+    let gradient_fn_ref = py_gradient_fn
+        .as_mut()
+        .map(|f| f as &mut dyn FnMut(MatRef<f64>) -> (Mat<f64>, Mat<f64>));
+
+    let meshes = ferreus_rbf::isosurfacing::build_isosurfaces(
+        seed_points_mat,
+        extents_slice,
+        resolution,
+        isovalues,
+        &mut py_surface_fn,
+        gradient_fn_ref,
+        cluster_method.unwrap().into(),
+        boundary_closure.unwrap().into(),
+        progress_sink.as_deref(),
+    );
+
+    let meshes: Vec<_> = meshes
+        .into_iter()
+        .map(|mesh| Py::new(py, Mesh::from(mesh)))
+        .collect::<PyResult<_>>()?;
+
+    PyList::new(py, meshes)
 }
 
 #[pyclass]
@@ -949,80 +1252,74 @@ pub struct RBFTestFunctions;
 impl RBFTestFunctions {
     /// Franke's function on R^2.
     #[staticmethod]
-    pub fn franke_2d<'py>(
-        py: Python<'py>,
-        points: PyReadonlyArray2<'_, f64>,
-    ) -> Bound<'py, PyArray2<f64>> {
+    pub fn franke_2d<'py>(py: Python<'py>, points: PyReadonlyArray2<'_, f64>) -> Py<PyAny> {
         let mat_points = points.into_faer().to_owned();
         let values = ferreus_rbf::RBFTestFunctions::franke_2d(&mat_points);
 
-        mat_to_numpy(&values, py)
+        mat_to_numpy_scalar_or_matrix(&values, py)
     }
 
     #[staticmethod]
-    pub fn f1_3d<'py>(
-        py: Python<'py>,
-        points: PyReadonlyArray2<'_, f64>,
-    ) -> Bound<'py, PyArray2<f64>> {
+    pub fn f1_3d<'py>(py: Python<'py>, points: PyReadonlyArray2<'_, f64>) -> Py<PyAny> {
         let mat_points = points.into_faer().to_owned();
         let values = ferreus_rbf::RBFTestFunctions::f1_3d(&mat_points);
 
-        mat_to_numpy(&values, py)
+        mat_to_numpy_scalar_or_matrix(&values, py)
     }
 
     #[staticmethod]
-    fn f2_3d<'py>(py: Python<'py>, points: PyReadonlyArray2<'_, f64>) -> Bound<'py, PyArray2<f64>> {
+    fn f2_3d<'py>(py: Python<'py>, points: PyReadonlyArray2<'_, f64>) -> Py<PyAny> {
         let mat_points = points.into_faer().to_owned();
         let values = ferreus_rbf::RBFTestFunctions::f2_3d(&mat_points);
 
-        mat_to_numpy(&values, py)
+        mat_to_numpy_scalar_or_matrix(&values, py)
     }
 
     #[staticmethod]
-    fn f3_3d<'py>(py: Python<'py>, points: PyReadonlyArray2<'_, f64>) -> Bound<'py, PyArray2<f64>> {
+    fn f3_3d<'py>(py: Python<'py>, points: PyReadonlyArray2<'_, f64>) -> Py<PyAny> {
         let mat_points = points.into_faer().to_owned();
         let values = ferreus_rbf::RBFTestFunctions::f3_3d(&mat_points);
 
-        mat_to_numpy(&values, py)
+        mat_to_numpy_scalar_or_matrix(&values, py)
     }
 
     #[staticmethod]
-    fn f4_3d<'py>(py: Python<'py>, points: PyReadonlyArray2<'_, f64>) -> Bound<'py, PyArray2<f64>> {
+    fn f4_3d<'py>(py: Python<'py>, points: PyReadonlyArray2<'_, f64>) -> Py<PyAny> {
         let mat_points = points.into_faer().to_owned();
         let values = ferreus_rbf::RBFTestFunctions::f4_3d(&mat_points);
 
-        mat_to_numpy(&values, py)
+        mat_to_numpy_scalar_or_matrix(&values, py)
     }
 
     #[staticmethod]
-    fn f5_3d<'py>(py: Python<'py>, points: PyReadonlyArray2<'_, f64>) -> Bound<'py, PyArray2<f64>> {
+    fn f5_3d<'py>(py: Python<'py>, points: PyReadonlyArray2<'_, f64>) -> Py<PyAny> {
         let mat_points = points.into_faer().to_owned();
         let values = ferreus_rbf::RBFTestFunctions::f5_3d(&mat_points);
 
-        mat_to_numpy(&values, py)
+        mat_to_numpy_scalar_or_matrix(&values, py)
     }
 
     #[staticmethod]
-    fn f6_3d<'py>(py: Python<'py>, points: PyReadonlyArray2<'_, f64>) -> Bound<'py, PyArray2<f64>> {
+    fn f6_3d<'py>(py: Python<'py>, points: PyReadonlyArray2<'_, f64>) -> Py<PyAny> {
         let mat_points = points.into_faer().to_owned();
         let values = ferreus_rbf::RBFTestFunctions::f6_3d(&mat_points);
 
-        mat_to_numpy(&values, py)
+        mat_to_numpy_scalar_or_matrix(&values, py)
     }
 
     #[staticmethod]
-    fn f7_3d<'py>(py: Python<'py>, points: PyReadonlyArray2<'_, f64>) -> Bound<'py, PyArray2<f64>> {
+    fn f7_3d<'py>(py: Python<'py>, points: PyReadonlyArray2<'_, f64>) -> Py<PyAny> {
         let mat_points = points.into_faer().to_owned();
         let values = ferreus_rbf::RBFTestFunctions::f7_3d(&mat_points);
 
-        mat_to_numpy(&values, py)
+        mat_to_numpy_scalar_or_matrix(&values, py)
     }
 
     #[staticmethod]
-    fn f8_3d<'py>(py: Python<'py>, points: PyReadonlyArray2<'_, f64>) -> Bound<'py, PyArray2<f64>> {
+    fn f8_3d<'py>(py: Python<'py>, points: PyReadonlyArray2<'_, f64>) -> Py<PyAny> {
         let mat_points = points.into_faer().to_owned();
         let values = ferreus_rbf::RBFTestFunctions::f8_3d(&mat_points);
 
-        mat_to_numpy(&values, py)
+        mat_to_numpy_scalar_or_matrix(&values, py)
     }
 }

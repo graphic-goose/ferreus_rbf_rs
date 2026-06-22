@@ -16,6 +16,7 @@ import numpy.typing as npt
 from ferreus_rbf.config import Params
 from ferreus_rbf.progress import Progress
 from ferreus_rbf.interpolant_config import InterpolantSettings
+from ferreus_rbf.isosurfacing import Mesh, BoundaryClosure
 
 class GlobalTrend:
     """
@@ -198,7 +199,7 @@ class RBFTestFunctions:
 
         Returns
         -------
-        (N, 1) float64 ndarray
+        (N,) float64 ndarray
             Function values at the input points.
         """
         ...
@@ -235,7 +236,7 @@ class RBFTestFunctions:
 
         Returns
         -------
-        (N, 1) float64 ndarray
+        (N,) float64 ndarray
             Function values at the input points.
         """
         ...
@@ -259,7 +260,7 @@ class RBFTestFunctions:
 
         Returns
         -------
-        (N, 1) float64 ndarray
+        (N,) float64 ndarray
         """
         ...
 
@@ -282,7 +283,7 @@ class RBFTestFunctions:
 
         Returns
         -------
-        (N, 1) float64 ndarray
+        (N,) float64 ndarray
         """
         ...
 
@@ -309,7 +310,7 @@ class RBFTestFunctions:
 
         Returns
         -------
-        (N, 1) float64 ndarray
+        (N,) float64 ndarray
         """
         ...
 
@@ -336,7 +337,7 @@ class RBFTestFunctions:
 
         Returns
         -------
-        (N, 1) float64 ndarray
+        (N,) float64 ndarray
         """
         ...
 
@@ -367,7 +368,7 @@ class RBFTestFunctions:
 
         Returns
         -------
-        (N, 1) float64 ndarray
+        (N,) float64 ndarray
         """
         ...
 
@@ -396,7 +397,7 @@ class RBFTestFunctions:
 
         Returns
         -------
-        (N, 1) float64 ndarray
+        (N,) float64 ndarray
         """
         ...
 
@@ -424,7 +425,7 @@ class RBFTestFunctions:
 
         Returns
         -------
-        (N, 1) float64 ndarray
+        (N,) float64 ndarray
         """
         ...
 
@@ -491,8 +492,8 @@ class RBFInterpolator:
             Coordinates of the input data points with shape (N, D), where N is the number of points
             and D is the dimensionality.
         values : npt.NDArray[np.float64]
-            Observed values at the input source point locations with shape (N, K), where N
-            is the number of points and K is the number of columns of observed values to solve for.
+            Observed values at the input source point locations with shape (N,) for scalar
+            values or (N, K) for one or more value columns.
         interpolant_settings : InterpolantSettings
             Settings used to configure the interpolator.
         params : Optional[Params], optional
@@ -523,8 +524,8 @@ class RBFInterpolator:
         Returns
         -------
         npt.NDArray[np.float64]
-            Array of interpolated values with shape (N, M), where N is the number of source points
-            and M is the number of columns of values.
+            Array of interpolated values with shape (N,) for scalar values or (N, M) for
+            multiple value columns.
         """
         ...
 
@@ -562,8 +563,8 @@ class RBFInterpolator:
         Returns
         -------
         values : npt.NDArray[np.float64]
-            Array of interpolated values with shape (N, M), where N is the number of target points
-            and M is the number of columns of values interpolated.
+            Array of interpolated values with shape (N,) for scalar values or (N, M) for
+            multiple value columns.
         """
         ...
 
@@ -589,8 +590,8 @@ class RBFInterpolator:
         Returns
         -------
         values : npt.NDArray[np.float64]
-            Array of interpolated values with shape (N, M), where N is the number of target points
-            and M is the number of columns of values interpolated.
+            Array of interpolated values with shape (N,) for scalar values or (N, M) for
+            multiple value columns.
         gradient : npt.NDArray[np.float64]
             Array of interpolated gradients with shape (N, D x M), where N is the number of target points,
             D is the dimensionality and M is the number of columns of values interpolated.    
@@ -619,8 +620,8 @@ class RBFInterpolator:
         Returns
         -------
         values : npt.NDArray[np.float64]
-            Array of interpolated values with shape (N, M), where N is the number of source points
-            and M is the number of columns of values interpolated.
+            Array of interpolated values with shape (N,) for scalar values or (N, M) for
+            multiple value columns.
         
         Notes
         -----
@@ -667,8 +668,8 @@ class RBFInterpolator:
         Returns
         -------
         values : npt.NDArray[np.float64]
-            Array of interpolated values with shape (N, M), where N is the number of target points
-            and M is the number of columns of values interpolated.
+            Array of interpolated values with shape (N,) for scalar values or (N, M) for
+            multiple value columns.
         """
         ...
 
@@ -696,8 +697,8 @@ class RBFInterpolator:
         Returns
         -------
         values : npt.NDArray[np.float64]
-            Array of interpolated values with shape (N, M), where N is the number of target points
-            and M is the number of columns of values interpolated.
+            Array of interpolated values with shape (N,) for scalar values or (N, M) for
+            multiple value columns.
         gradients : npt.NDArray[np.float64]
             Array of interpolated gradients with shape (N, D x M), where N is the number of target points,
             D is the dimensionality and M is the number of columns of values interpolated.    
@@ -707,27 +708,42 @@ class RBFInterpolator:
         """
         ...
 
+    def build_isosurface(
+        self,
+        extents: npt.NDArray[np.float64],
+        resolution: float,
+        isovalue: float,
+        boundary_closure: Optional[BoundaryClosure] = None,
+    ) -> Mesh:
+        """Extract an isosurface using regularised marching tetrahedra.
+
+        Parameters
+        ----------
+        extents : npt.NDArray[np.float64]
+            Evaluation domain `[minx, miny, minz, maxx, maxy, maxz]`.
+        resolution : float
+            Sampling lattice step in world units.
+        isovalue : float
+            Scalar level to extract.
+        boundary_closure : BoundaryClosure | None, optional
+            Boundary closure method to use. If None, leaves clipped boundaries open.
+
+        Returns
+        -------
+        Mesh
+            Extracted triangle mesh.
+        """
+        ...
+
     def build_isosurfaces(
         self,
         extents: npt.NDArray[np.float64],
         resolution: float,
         isovalues: list[float],
-    ) -> tuple[list[npt.NDArray[np.float64]], list[npt.NDArray[np.uintp]]]:
-        """Build 3D isosurfaces using a **surface-following, non-adaptive Surface Nets** method.
-
-        The sampling `resolution` controls grid density; choose it relative to the
-        data scale and desired detail. Multiple `isovalues` may be provided; each
-        produces a separate surface.
-
-        Seed cells are selected from samples within `resolution` of an isovalue.
-        If no seeds are found for a given isovalue, the corresponding entry is
-        empty.
-
-        !!! warning "Surface quality"
-            The current isosurface extraction method does **not** guarantee
-            manifold or valid meshes; surfaces may contain trifurcations or self-intersections.
-
-            Surfaces may therefore not be suitable for downstream boolean operations.
+        boundary_closure: Optional[BoundaryClosure] = None,
+    ) -> list[Mesh]:
+        """Convenience wrapper for [`build_isosurface`][ferreus_rbf.RBFInterpolator.build_isosurface] that
+        can extract multiple meshes from a list of isovalues at once.
 
         Parameters
         ----------
@@ -737,15 +753,13 @@ class RBFInterpolator:
             grid step in world units.
         isovalues : list[float]
             list of scalar levels to extract.
+        boundary_closure : BoundaryClosure | None, optional
+            Boundary closure method to use. If None, leaves clipped boundaries open.
 
         Returns
         -------
-        tuple[list[npt.NDArray[np.float64]], list[npt.NDArray[np.uintp]]]
-            `(points_per_iso, faces_per_iso)` where:  
-
-            - `points_per_iso[i]` is a `(V_i, 3)` array of vertex positions for the
-              `i`-th isosurface.  
-            - `faces_per_iso[i]` is an `(F_i, 3)` integer array of triangle vertex indices.
+        list[Mesh]
+            One mesh per requested isovalue.
         """
         ...
 
@@ -792,23 +806,3 @@ class RBFInterpolator:
         """
         ...
 
-def get_unique_indices(
-    points: npt.NDArray[np.float64],
-    interpolant_settings: InterpolantSettings
-) -> npt.NDArray[np.uintp]:
-    """
-    Gets the unique indices from a list of points
-
-    Parameters
-    ----------
-    points : npt.NDArray[np.f64]
-        Input source points to get unique indices from.
-    interpolant_settings : InterpolantSettings
-            Settings used to configure the interpolator.
-
-    Returns
-    -------
-    npt.NDArray[np.uintp]
-        1D array of unique point indices into the input array.
-    """
-    ...

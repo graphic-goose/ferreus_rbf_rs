@@ -425,26 +425,26 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
     /// * `weights`: Matrix of shape (N, K), where N is the number of source points and K is the number of right-hand sides
     ///              to evaluate, containing source point weights (values)
     /// * `target points`: Matrix of shape (N, D), where N is the number of target points and D is the dimensionality.
-    /// 
-    /// # Returns 
+    ///
+    /// # Returns
     /// * `target_values` : Matrix of shape (M, K), where M is the number of target points and K is the number of right-hand sides evaluated.
-    /// * `gradients` : Matrix of shape `(M, K * D)` where M is the number of target points, K is the number of right-hand-sides evaluated 
-    ///     and D is the dimensionality. 
+    /// * `gradients` : Matrix of shape `(M, K * D)` where M is the number of target points, K is the number of right-hand-sides evaluated
+    ///     and D is the dimensionality.
     ///     Gradient columns are laid out as `[rhs0_dx, rhs0_dy, rhs0_dz, rhs1_dx, ...]`, truncated to the tree dimensionality.    
     pub fn evaluate_with_gradients(
         &mut self,
         weights: &MatRef<f64>,
-        target_points: &Mat<f64>,        
+        target_points: &Mat<f64>,
     ) -> Result<(Mat<f64>, Mat<f64>), FmmError> {
         let (target_values, gradients) = self._eval::<true>(weights, target_points)?;
-        Ok((target_values, gradients.unwrap()))        
+        Ok((target_values, gradients.unwrap()))
     }
 
     /// Internal helper function for evaluating with or without gradients.
     fn _eval<const WITH_GRADS: bool>(
         &mut self,
         weights: &MatRef<f64>,
-        target_points: &Mat<f64>, 
+        target_points: &Mat<f64>,
     ) -> Result<(Mat<f64>, Option<Mat<f64>>), FmmError> {
         self.reset_local_coefficients();
 
@@ -482,19 +482,28 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
         match WITH_GRADS {
             true => {
                 self.check_kernel_supports_gradients(target_points, WITH_GRADS)?;
-                let gradients = Mat::<f64>::zeros(
-                    ntarget_points,
-                    self.nrhs * (self.dimensions as usize),
-                );                
-                self.leaf_pass(&weights, &target_points, WITH_GRADS, target_values.as_ref(), Some(gradients.as_ref()));
-                return Ok((target_values, Some(gradients)))
-            }            
+                let gradients =
+                    Mat::<f64>::zeros(ntarget_points, self.nrhs * (self.dimensions as usize));
+                self.leaf_pass(
+                    &weights,
+                    &target_points,
+                    WITH_GRADS,
+                    target_values.as_ref(),
+                    Some(gradients.as_ref()),
+                );
+                return Ok((target_values, Some(gradients)));
+            }
             false => {
-                self.leaf_pass(&weights, &target_points, WITH_GRADS, target_values.as_ref(), None);
-                return Ok((target_values, None))
-            },
+                self.leaf_pass(
+                    &weights,
+                    &target_points,
+                    WITH_GRADS,
+                    target_values.as_ref(),
+                    None,
+                );
+                return Ok((target_values, None));
+            }
         }
-        
     }
 
     /// Performs a downward pass of the tree to set the local coefficients. Intended to be
@@ -503,8 +512,8 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
     /// # Arguments
     /// * `weights`: Matrix of shape (N, K), where N is the number of source points and K is the number of right-hand sides
     ///              to evaluate, containing source point weights (values)
-    /// 
-    /// # Returns 
+    ///
+    /// # Returns
     /// * `target_values` : Matrix of shape (M, K), where M is the number of target points and K is the number of right-hand sides evaluated.
     pub fn set_local_coefficients(&mut self, weights: &MatRef<f64>) {
         self.reset_local_coefficients();
@@ -522,8 +531,8 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
     /// * `weights`: Matrix of shape (N, K), where N is the number of source points and K is the number of right-hand sides
     ///              to evaluate, containing source point weights (values)
     /// * `target_points`: Matrix of shape (N, D), where N is the number of target points and D is the dimensionality.
-    /// 
-    /// # Returns 
+    ///
+    /// # Returns
     /// * `target_values` : Matrix of shape (M, K), where M is the number of target points and K is the number of right-hand sides evaluated.
     pub fn evaluate_leaves(
         &mut self,
@@ -542,11 +551,11 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
     /// * `weights`: Matrix of shape (N, K), where N is the number of source points and K is the number of right-hand sides
     ///              to evaluate, containing source point weights (values)
     /// * `target_points`: Matrix of shape (N, D), where N is the number of target points and D is the dimensionality.
-    /// 
-    /// # Returns 
+    ///
+    /// # Returns
     /// * `target_values` : Matrix of shape (M, K), where M is the number of target points and K is the number of right-hand sides evaluated.
-    /// * `gradients` : Matrix of shape `(M, K * D)` where M is the number of target points, K is the number of right-hand-sides evaluated 
-    ///     and D is the dimensionality. 
+    /// * `gradients` : Matrix of shape `(M, K * D)` where M is the number of target points, K is the number of right-hand-sides evaluated
+    ///     and D is the dimensionality.
     ///     Gradient columns are laid out as `[rhs0_dx, rhs0_dy, rhs0_dz, rhs1_dx, ...]`, truncated to the tree dimensionality.   
     pub fn evaluate_leaves_with_gradients(
         &mut self,
@@ -561,8 +570,8 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
     fn _eval_leaves<const WITH_GRADS: bool>(
         &mut self,
         weights: &MatRef<f64>,
-        target_points: &Mat<f64>,        
-    ) -> Result<(Mat<f64>, Option<Mat<f64>>), FmmError>{
+        target_points: &Mat<f64>,
+    ) -> Result<(Mat<f64>, Option<Mat<f64>>), FmmError> {
         let ntarget_points = target_points.shape().0;
 
         let target_values = Mat::<f64>::zeros(ntarget_points, self.nrhs);
@@ -582,18 +591,27 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
         match WITH_GRADS {
             true => {
                 self.check_kernel_supports_gradients(target_points, WITH_GRADS)?;
-                let gradients = Mat::<f64>::zeros(
-                    ntarget_points,
-                    self.nrhs * (self.dimensions as usize),
+                let gradients =
+                    Mat::<f64>::zeros(ntarget_points, self.nrhs * (self.dimensions as usize));
+                self.leaf_pass(
+                    &weights,
+                    &target_points,
+                    WITH_GRADS,
+                    target_values.as_ref(),
+                    Some(gradients.as_ref()),
                 );
-                self.leaf_pass(&weights, &target_points, WITH_GRADS, target_values.as_ref(), Some(gradients.as_ref()));
-                return Ok((target_values, Some(gradients)))
-            }            
+                return Ok((target_values, Some(gradients)));
+            }
             false => {
-                self.leaf_pass(&weights, &target_points, WITH_GRADS, target_values.as_ref(), None);
-                return Ok((target_values, None))
-            },
-
+                self.leaf_pass(
+                    &weights,
+                    &target_points,
+                    WITH_GRADS,
+                    target_values.as_ref(),
+                    None,
+                );
+                return Ok((target_values, None));
+            }
         }
     }
 
@@ -1075,18 +1093,24 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
         evaluate_gradients: bool,
         target_values_ref: MatRef<f64>,
         target_gradients_ref: Option<MatRef<f64>>,
-    ) {  
+    ) {
         match evaluate_gradients {
-            false => {
-                self.leaf_pass_mode::<false>(source_values, target_points, target_values_ref, target_gradients_ref)
-            }
-            true => {
-                self.leaf_pass_mode::<true>(source_values, target_points, target_values_ref, target_gradients_ref)
-            }
+            false => self.leaf_pass_mode::<false>(
+                source_values,
+                target_points,
+                target_values_ref,
+                target_gradients_ref,
+            ),
+            true => self.leaf_pass_mode::<true>(
+                source_values,
+                target_points,
+                target_values_ref,
+                target_gradients_ref,
+            ),
         }
     }
 
-    fn leaf_pass_mode< const WITH_GRADS: bool>(
+    fn leaf_pass_mode<const WITH_GRADS: bool>(
         &self,
         source_values: &MatRef<f64>,
         target_points: &Mat<f64>,
@@ -1156,7 +1180,7 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
 
                 let u_cell_points =
                     utils::select_mat_rows(self.source_points.as_ref(), u_cell_source_indices);
-                
+
                 for rhs in 0..self.nrhs {
                     let rhs_vals = u_cell_values.col(rhs);
                     let value_ptr = target_values_ref.col(rhs).as_ptr() as *mut f64;
@@ -1199,11 +1223,7 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
                                 let mut grad_buf = [0.0_f64; 3];
                                 let value = self
                                     .kernel
-                                    .evaluate_value_gradient(
-                                        target,
-                                        source,
-                                        &mut grad_buf[..dims],
-                                    )
+                                    .evaluate_value_gradient(target, source, &mut grad_buf[..dims])
                                     .expect("Kernel gradient support was pre-checked");
 
                                 unsafe {
@@ -1215,14 +1235,9 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
                                     if let Some(ptr) = grad_col2_ptr {
                                         *ptr.add(target_idx) += grad_buf[2] * w;
                                     }
-                                }                                
+                                }
                             } else {
-                                let value = self
-                                    .kernel
-                                    .evaluate(
-                                        target,
-                                        source,
-                                    );
+                                let value = self.kernel.evaluate(target, source);
 
                                 unsafe {
                                     *value_ptr.add(target_idx) += value * w;
@@ -1230,7 +1245,7 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
                             }
                         }
                     }
-                }                   
+                }
             }
         });
     }
@@ -1334,7 +1349,7 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
                                 }
                             }
                         }
-                    }                    
+                    }
                 });
         });
     }

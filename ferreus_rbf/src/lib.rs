@@ -32,8 +32,9 @@
 //! - Supports 1D, 2D, and 3D input domains
 //! - Scales efficiently to datasets with over 1,000,000 input source points
 //! - Optional global trend transforms to capture large-scale patterns in the data
-//! - Provides fast 3D isosurface extraction using a surface-following,
-//!   non-adaptive Surface Nets method
+//! - Provides fast 3D isosurface extraction using the surface-following,
+//!   regularised marching tetrahedra method from the [`ferreus_rmt`] crate
+//! - Optional simultaneous evaluation of RBF values and gradients
 //! - Built on [`faer`](https://docs.rs/faer/latest/faer/) for linear algebra, avoiding complex build dependencies
 //!
 //! # Examples
@@ -97,39 +98,28 @@
 //! 3.  Fasshauer, G., 2007. Meshfree Approximation Methods with Matlab. World Scientific Publishing Co.
 //! 4.  J. B. Cherrie. Fast Evaluation of Radial Basis Functions: Theory and Application.
 //!     PhD thesis, University of Canterbury, 2000.
-pub mod interpolant_config;
-
+//! 5.  G.M. Treece, R.W. Prager, and A.H. Gee. Regularised marching tetrahedra: improved
+//!     iso-surface extraction. Computers & Graphics, 23(4):583–598, 1999.
 mod common;
-
-mod rbf;
-
-mod domain;
-
-mod polynomials;
-
-mod preconditioning;
-
-mod rtree;
-
-mod kdtree;
-
-mod linalg;
-
-mod surfacing;
-
-mod iterative_solvers;
-
-mod global_trend;
-
-pub mod progress;
-
 pub mod config;
-
+mod domain;
+mod global_trend;
+pub mod interpolant_config;
+mod iterative_solvers;
+mod kdtree;
+mod linalg;
+mod polynomials;
+mod preconditioning;
+pub mod progress;
+mod rbf;
 mod rbf_test_functions;
+mod rtree;
 
 /// Functions related to isosurfacing algorithms
 pub mod isosurfacing {
-    pub use crate::surfacing::{surfacing_io::save_obj, surface_nets::surface_nets::surface_nets};
+    pub use ferreus_rmt::{
+        BoundaryClosure, ClusterMethod, Mesh, build_isosurface, build_isosurfaces,
+    };
 }
 
 pub use {
@@ -138,6 +128,6 @@ pub use {
         point_arrays_to_csv,
     },
     global_trend::GlobalTrend,
-    rbf::{Coefficients, ModelIOError, RBFInterpolator, RBFInterpolatorBuilder, get_unique_indices},
+    rbf::{Coefficients, ModelIOError, RBFInterpolator, RBFInterpolatorBuilder},
     rbf_test_functions::RBFTestFunctions,
 };

@@ -25,23 +25,25 @@ jobs:
         with:
           python-version: "3.x"
 
-      - name: Install MkDocs dependencies
+      - name: Install Zensical dependencies
         run: |
           python -m pip install --upgrade pip
           pip install \
-            mkdocs-material \
-            mkdocs-autorefs \
-            mkdocstrings \
+            zensical \
             mkdocstrings-python \
             pymdown-extensions
 
       - name: Build ferreus_rbf docs
         working-directory: py_ferreus_rbf
-        run: mkdocs build -d ../site/ferreus_rbf
+        run: zensical build -d ../site/ferreus_rbf
 
       - name: Build ferreus_bbfmm docs
         working-directory: py_ferreus_bbfmm
-        run: mkdocs build -d ../site/ferreus_bbfmm
+        run: zensical build -d ../site/ferreus_bbfmm
+
+      - name: Build ferreus_rmt docs
+        working-directory: py_ferreus_rmt
+        run: zensical build -d ../site/ferreus_rmt
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

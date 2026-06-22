@@ -10,6 +10,9 @@ license = "MIT"
 keywords = ["fmm", "bbfmm", "fast-multipole"]
 rust-version = "1.85.0"
 
+[lib]
+crate-type = ["lib"]
+
 [dependencies]
 faer = "0.23.2"
 rayon = "1.11.0"

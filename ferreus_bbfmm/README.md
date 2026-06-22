@@ -19,6 +19,7 @@ use‑cases where the kernel is smooth (i.e. non‑oscillatory).
 - Adaptive and non‑adaptive tree structures
 - Support for multiple right‑hand sides
 - Designed to work with user‑defined kernels via traits
+- Optional simultaneous evaluation of kernel values and gradients
 
 `ferreus_bbfmm` is used directly by the `ferreus_rbf` crate as the fast
 evaluator for large‑scale RBF interpolation problems, and is also exposed to
@@ -30,7 +31,7 @@ Add the crate to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-ferreus_bbfmm = "0.1"
+ferreus_bbfmm = "0.2"
 ```
 
 Then define a kernel that implements the appropriate trait and construct an

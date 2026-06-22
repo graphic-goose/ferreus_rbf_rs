@@ -189,7 +189,7 @@ where
 ///     [3.0, -1.0],
 ///     [0.5, 4.0f64]
 /// ];
-/// let extents = get_pointarray_extents(&points);
+/// let extents = get_pointarray_extents(points.as_ref());
 /// assert_eq!(extents, vec![0.5, -1.0, 3.0, 4.0]);
 /// ```
 #[inline(always)]

@@ -2,7 +2,6 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 from ferreus_rbf import RBFInterpolator
-from ferreus_rbf.isosurfacing import save_obj
 from ferreus_rbf.interpolant_config import (
     RBFKernelType,
     InterpolantSettings,
@@ -49,7 +48,7 @@ df = pd.read_csv(pointset_path)
 # signed distance (SD) values in the 4th column. The SD values are 0 on the surface
 # boundary, -ve inside the surface and +ve outside the surface.
 source_points = df[["X", "Y", "Z"]].to_numpy().astype(np.float64)
-source_values = df["SignedDistance"].to_numpy().reshape((-1, 1)).astype(np.float64)
+source_values = df["SignedDistance"].to_numpy().astype(np.float64)
 
 # Get the axis aligned bounding box extents of the source points
 # to use for the isosurface extraction
@@ -92,13 +91,13 @@ rbfi = RBFInterpolator(
 # Define the sampling grid resolution for the surfacer
 resolution = 5
 
-# Define the isovalues at which to surface
-isovalues = [0]
+# Define the isovalue at which to surface
+isovalue = 0
 
 # Generate an isosurface
-all_verts, all_faces = rbfi.build_isosurfaces(extents, resolution, isovalues)
+mesh = rbfi.build_isosurface(extents, resolution, isovalue)
 
 # Save the isosurface out to an obj file
 surface_name = f"isosurface_spheroidal_drift_{resolution}m"
 outpath = Path(f"{surface_name}.obj")
-save_obj(str(outpath), surface_name, all_verts[0], all_faces[0])
+mesh.save_obj(str(outpath), surface_name)

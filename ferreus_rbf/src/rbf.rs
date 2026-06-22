@@ -14,20 +14,22 @@ use crate::{
     domain::Domain,
     global_trend::{GlobalTrend, GlobalTrendTransform},
     interpolant_config::InterpolantSettings,
+    isosurfacing::{self, Mesh},
     iterative_solvers,
     kdtree::{DistanceMetric, KDTree, PointRowWithId},
     polynomials,
     preconditioning::{domain_decomposition::DDMTree, schwarz},
-    progress::{ProgressMsg, ProgressSink},
-    surfacing::surface_nets::surface_nets,
+    progress::{ProgressMsg, ProgressSink, ProgressSinkExt},
 };
 
 use faer::{Mat, MatRef, Row, concat, mat::AsMatRef};
 use ferreus_bbfmm::FmmError;
 use ferreus_rbf_utils::{self, FmmTree, KernelParams};
+use ferreus_rmt::{BoundaryClosure, ClusterMethod};
 use roots;
 use serde::{Deserialize, Serialize};
 use std::{
+    cell::RefCell,
     collections::HashSet,
     error::Error,
     f64,
@@ -337,7 +339,7 @@ impl RBFInterpolator {
         });
 
         let (mut unique_points, unique_point_values) = if params.test_unique {
-            let idx = get_unique_indices(points.as_ref(), &interpolant_settings);
+            let idx = remove_duplicates(points.as_ref(), &interpolant_settings);
 
             if idx.len() == points.nrows() {
                 (points, point_values)
@@ -909,59 +911,77 @@ impl RBFInterpolator {
         (interpolated_values, gradients.unwrap())
     }
 
-    /// Build isosurfaces using a surface-following, non-adaptive Surface Nets algorithm.
+    /// Build an isosurface using a surface-following, regularised marching tetrahedra algorithm.
     ///
-    /// The sampling `resolution` controls grid density; choose it relative to the
+    /// The sampling `resolution` controls sampling lattice density; choose it relative to the
     /// data scale and desired detail. Multiple `isovalues` may be provided; each
-    /// produces a separate surface.
-    ///
-    /// Seed cells are selected from samples within `resolution` of an isovalue.
-    /// If no seeds are found for a given isovalue, the corresponding entry is
-    /// empty.
+    /// produces a separate mesh.
     ///
     /// ### Parameters
     /// - `extents`: evaluation domain `[minx, miny, minz, maxx, maxy, maxz]`.
     /// - `resolution`: grid step in world units.
-    /// - `isovalues`: list of scalar levels to extract.
+    /// - `isovalue`: level-set to extract.
+    /// - `boundary_closure`: [`BoundaryClosure`] method to use.
     ///
     /// ### Returns
-    /// `(points_per_iso, faces_per_iso)` where:
-    /// - `points_per_iso[i]` is a `(V_i × 3)` matrix of vertex positions for the
-    ///   `i`-th isosurface.
-    /// - `faces_per_iso[i]` is an `(F_i × 3)` integer matrix of triangle vertex indices.
+    /// [`Mesh`]
     ///
     /// ### Notes
     /// - Only implemented in 3D.
-    /// - The current isosurface extraction method does **not** guarantee
-    ///   manifold or valid meshes; surfaces may contain trifurcations or
-    ///   self-intersections and may not be suitable for downstream boolean
-    ///   operations.
     ///
     /// ### Example
     /// ```no_run
-    /// # use ferreus_rbf::{RBFInterpolator};
+    /// # use ferreus_rbf::{RBFInterpolator, isosurfacing::BoundaryClosure};
+    /// # let mut rbfi: RBFInterpolator = unimplemented!();
+    /// let extents = vec![0.0, 0.0, 0.0, 100.0, 100.0, 100.0]; // [mins..., maxs...]
+    /// let resolution = 2.0;
+    /// let iso = 0.0;
+    /// let boundary_closure = BoundaryClosure::None;
+    /// let mesh = rbfi.build_isosurface(&extents, resolution, iso, boundary_closure);
+    /// ```    
+    pub fn build_isosurface(
+        &mut self,
+        extents: &Vec<f64>,
+        resolution: f64,
+        isovalue: f64,
+        boundary_closure: BoundaryClosure,
+    ) -> Mesh {
+        self.build_isosurfaces(extents, resolution, &[isovalue].into(), boundary_closure)
+            .into_iter()
+            .next()
+            .unwrap()
+    }
+
+    /// Convenience wrapper for [`RBFInterpolator::build_isosurface`] that can extract multiple
+    /// meshes from a vec of isovalues at once.
+    ///
+    /// ### Example
+    /// ```no_run
+    /// # use ferreus_rbf::{RBFInterpolator, isosurfacing::BoundaryClosure};
     /// # let mut rbfi: RBFInterpolator = unimplemented!();
     /// let extents = vec![0.0, 0.0, 0.0, 100.0, 100.0, 100.0]; // [mins..., maxs...]
     /// let resolution = 2.0;
     /// let isos = vec![0.0, 1.0];
-    /// let (all_pts, all_faces) = rbfi.build_isosurfaces(&extents, &resolution, &isos);
+    /// let boundary_closure = BoundaryClosure::None;
+    /// let meshes = rbfi.build_isosurfaces(&extents, resolution, &isos, boundary_closure);
     /// ```
     pub fn build_isosurfaces(
         &mut self,
         extents: &Vec<f64>,
-        resolution: &f64,
+        resolution: f64,
         isovalues: &Vec<f64>,
-    ) -> (Vec<Mat<f64>>, Vec<Mat<usize>>) {
+        boundary_closure: BoundaryClosure,
+    ) -> Vec<Mesh> {
         let dimensions = self.points.ncols();
         assert_eq!(dimensions, 3usize, "Only supported for 3D isosurfacing");
 
         let mut evaluator_extents = extents.clone();
         evaluator_extents[0..dimensions]
             .iter_mut()
-            .for_each(|val| *val -= resolution * 2.0);
+            .for_each(|val| *val -= resolution * 10.0);
         evaluator_extents[dimensions..]
             .iter_mut()
-            .for_each(|val| *val += resolution * 2.0);
+            .for_each(|val| *val += resolution * 10.0);
 
         self.build_evaluator(Some(evaluator_extents));
 
@@ -971,11 +991,12 @@ impl RBFInterpolator {
         let scale = &self.scale_factor;
         let gt = &self.global_trend;
 
-        let tree = self.evaluator.as_mut().unwrap();
+        let tree = RefCell::new(self.evaluator.as_mut().unwrap());
 
-        let mut surface_fn = move |targets: MatRef<f64>| {
+        let mut surface_fn = |targets: MatRef<f64>| {
+            let mut tree = tree.borrow_mut();
             let params = EvaluatorParams {
-                tree: &mut *tree,
+                tree: &mut **tree,
                 target_points: targets,
                 coefficients: coeffs,
                 interpolant_settings: settings,
@@ -989,28 +1010,49 @@ impl RBFInterpolator {
             _evaluate(params).unwrap_or_else(panic_on_fmm_error).0
         };
 
-        let progress_callback = &self.progress_callback;
-        let seed_points = &self.points;
-        let seed_values = &self.point_values;
+        let mut gradient_fn = |targets: MatRef<f64>| {
+            let mut tree = tree.borrow_mut();
+            let params = EvaluatorParams {
+                tree: &mut **tree,
+                target_points: targets,
+                coefficients: coeffs,
+                interpolant_settings: settings,
+                translation_factor: translation,
+                scale_factor: scale,
+                evaluate_gradients: true,
+                add_nugget: false,
+                global_trend: gt,
+                evaluator_mode: FmmEvaluatorMode::Leaves,
+            };
+            let (values, gradients) = _evaluate(params).unwrap_or_else(panic_on_fmm_error);
+            (values, gradients.unwrap())
+        };
 
-        let mut all_isosurface_points = Vec::new();
-        let mut all_isosurface_faces = Vec::new();
+        let progress_callback = self
+            .progress_callback
+            .clone()
+            .map(|sink| sink.into_rmt_progress());
+
+        let seed_points = &self.points;
+
+        let mut all_meshes = Vec::new();
 
         for val in isovalues {
-            let (verts, faces) = surface_nets::surface_nets(
+            let mesh = isosurfacing::build_isosurface(
+                seed_points.as_ref(),
                 extents,
-                *resolution,
+                resolution,
                 *val,
                 &mut surface_fn,
-                seed_points.as_ref(),
-                seed_values.as_ref(),
-                progress_callback,
+                Some(&mut gradient_fn),
+                ClusterMethod::CurvatureWeighted,
+                boundary_closure,
+                progress_callback.as_deref(),
             );
-            all_isosurface_points.push(verts);
-            all_isosurface_faces.push(faces);
+            all_meshes.push(mesh);
         }
 
-        (all_isosurface_points, all_isosurface_faces)
+        all_meshes
     }
 
     /// Save this interpolator to a **JSON envelope** `{ format, version, model }`.
@@ -1277,7 +1319,6 @@ fn union_extents(a: &[f64], b: &[f64]) -> Vec<f64> {
     let mins: Vec<f64> = a_min.iter().zip(b_min).map(|(x, y)| x.min(*y)).collect();
     let maxs: Vec<f64> = a_max.iter().zip(b_max).map(|(x, y)| x.max(*y)).collect();
 
-    // same layout as input: mins first, then maxs
     mins.into_iter().chain(maxs.into_iter()).collect()
 }
 
@@ -1373,7 +1414,7 @@ fn duplicate_cutoff_distance(h_ref: f64, interpolant_settings: &InterpolantSetti
 /// cutoff radius; only the first point in each group is kept.
 ///
 /// Returns: indices of unique points to keep.
-pub fn get_unique_indices(
+fn remove_duplicates(
     points: MatRef<f64>,
     interpolant_settings: &InterpolantSettings,
 ) -> Vec<usize> {

@@ -2,7 +2,7 @@ site_name: "ferreus_bbfmm"
 site_url: "https://graphic-goose.github.io/ferreus_rbf_rs/ferreus_bbfmm/"
 
 theme:
-  name: material
+  variant: classic
 
   features:
     - navigation.tabs
@@ -61,6 +61,7 @@ plugins:
           show_source: false
           show_root_heading: true
           show_symbol_type_toc: true
+          signature_crossrefs: true
           docstring_section_style: table
           merge_init_into_class: true
           extra:
@@ -103,7 +104,7 @@ nav:
   - Home: index.md
   - Examples:
       - Matrix-vector product: examples/matrix_vector_product.md
-      - Matrix-vector project with gradients: examples/matrix_vector_product_with_gradients.md
+      - Matrix-vector product with gradients: examples/matrix_vector_product_with_gradients.md
       - RBF evaluator: examples/rbf_evaluator.md
   - API:
       - Overview: api/index.md

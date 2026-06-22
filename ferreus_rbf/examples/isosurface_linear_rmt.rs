@@ -15,11 +15,11 @@ use ferreus_rbf::{
     interpolant_config::{
         FittingAccuracy, FittingAccuracyType, InterpolantSettings, RBFKernelType,
     },
-    progress::{ProgressMsg, ProgressSink, closure_sink},
-    isosurfacing::{surface_nets, save_obj},
+    isosurfacing::{BoundaryClosure, ClusterMethod, build_isosurface},
+    progress::{ProgressMsg, ProgressSink, ProgressSinkExt, closure_sink},
 };
 use ferreus_rbf_utils;
-use std::{env, sync::Arc};
+use std::{cell::RefCell, env, rc::Rc, sync::Arc};
 
 /// Nice float formatter for filenames: trims trailing zeros and dots.
 fn fmt_num(x: f64) -> String {
@@ -101,53 +101,63 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let callback = get_callback_sink();
 
     // Setup and solve the RBF system
-    let mut rbfi = RBFInterpolator::builder(source_points.clone(), source_values.clone(), interpolant_settings)
-        .progress_callback(callback.clone())
-        .build();
+    let mut rbfi = RBFInterpolator::builder(
+        source_points.clone(),
+        source_values.clone(),
+        interpolant_settings,
+    )
+    .progress_callback(callback.clone())
+    .build();
 
     // Define the sampling grid resolution for the surfacer
-    let resolution = 0.1;
-
-    let bbox_padding = 2.0;
+    let resolution = 10.0;
 
     let evaluator_extents: Vec<f64> = source_point_extents
         .iter()
         .enumerate()
-        .map(|(idx, val)| {
-            match idx < 3 {
-                true => val - &resolution * (&bbox_padding + 1.0),
-                false => val + &resolution * (&bbox_padding + 1.0),
-            }
+        .map(|(idx, val)| match idx < 3 {
+            true => val - resolution * 10.0,
+            false => val + resolution * 10.0,
         })
         .collect();
 
-    //  Define the isovalues at which to surface
-    let isovalue = 0.0;
+    rbfi.build_evaluator(Some(evaluator_extents));
 
-    let mut surface_fn = move |targets: MatRef<f64>| {
-        rbfi.evaluate_targets(targets)
+    let rbfi = Rc::new(RefCell::new(rbfi));
+    let rbfi_surface = Rc::clone(&rbfi);
+    let rbfi_grad = Rc::clone(&rbfi);
+
+    let mut surface_fn =
+        move |targets: MatRef<f64>| rbfi_surface.borrow_mut().evaluate_targets(targets.as_ref());
+
+    let mut gradient_fn = move |targets: MatRef<f64>| {
+        rbfi_grad
+            .borrow_mut()
+            .evaluate_targets_with_gradients(targets.as_ref())
     };
 
-    // Generate an isosurface
-    let (verts, faces) = surface_nets(
-        &evaluator_extents,
+    let rmt_callback = callback.clone().into_rmt_progress();
+
+    //  Define the isovalue at which to surface
+    let isovalue = 0.0;
+
+    // Generate an isosurface directly from the RMT extractor.
+    let mesh = build_isosurface(
+        source_points.as_ref(),
+        &source_point_extents,
         resolution,
         isovalue,
         &mut surface_fn,
-        source_points.as_ref(),
-        source_values.as_ref(),
-        &None,
+        Some(&mut gradient_fn),
+        ClusterMethod::CurvatureWeighted,
+        BoundaryClosure::ClosePositive,
+        Some(rmt_callback.as_ref()),
     );
 
     //Save the isosurface out to an obj file
     let name = format!("isosurface_linear_{}m", fmt_num(resolution));
     let outpath = cwd.join("examples").join(format!("{}.obj", &name));
-    save_obj(
-        outpath,
-        &name,
-        verts.as_ref(),
-        faces.as_ref(),
-    )?;
+    mesh.save_obj(outpath, &name)?;
 
     Ok(())
 }

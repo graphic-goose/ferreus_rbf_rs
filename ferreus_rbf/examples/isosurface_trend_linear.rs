@@ -15,8 +15,8 @@ use ferreus_rbf::{
     interpolant_config::{
         FittingAccuracy, FittingAccuracyType, InterpolantSettings, RBFKernelType,
     },
+    isosurfacing::BoundaryClosure,
     progress::{ProgressMsg, ProgressSink, closure_sink},
-    isosurfacing::save_obj,
 };
 use ferreus_rbf_utils;
 use std::{env, sync::Arc};
@@ -126,22 +126,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Define the sampling grid resolution for the surfacer
     let resolution = 5.0;
 
-    //  Define the isovalues at which to surface
-    let isovalues = vec![0.0];
+    //  Define the isovalue at which to surface
+    let isovalue = 0.0;
 
     // Generate an isosurface
-    let (all_isosurface_points, all_isosurface_faces) =
-        rbfi.build_isosurfaces(&source_point_extents, &resolution, &isovalues);
+    let mesh = rbfi.build_isosurface(
+        &source_point_extents,
+        resolution,
+        isovalue,
+        BoundaryClosure::None,
+    );
 
     //Save the isosurface out to an obj file
     let name = format!("albatite_isosurface_global_trend_{}m", fmt_num(resolution));
     let outpath = cwd.join("examples").join(format!("{}.obj", &name));
-    save_obj(
-        outpath,
-        &name,
-        all_isosurface_points[0].as_ref(),
-        all_isosurface_faces[0].as_ref(),
-    )?;
+    mesh.save_obj(outpath, &name)?;
 
     Ok(())
 }

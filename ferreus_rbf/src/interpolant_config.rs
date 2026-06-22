@@ -57,7 +57,7 @@ pub enum FittingAccuracyType {
     /// The mismatch must be reduced by this factor compared to the initial mismatch.
     Relative,
 
-    /// The mismatch must be less than this fixed amount in the same units as your
+    /// The mismatch must be less than this fixed amount in the same units as the
     /// data values.
     Absolute,
 }

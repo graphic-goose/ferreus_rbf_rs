@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "ferreus_rbf"
-version = "0.1.1"
+version = "0.2.0"
 readme = "README.md"
 license = "MIT"
 authors = [{ name = "Daniel Owen", email = "daniel.owen@live.com.au"}]
@@ -19,7 +19,6 @@ keywords = [
 classifiers = [
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",
-    "Programming Language :: Python :: Implementation :: PyPy",
 ]
 
 [tool.maturin]

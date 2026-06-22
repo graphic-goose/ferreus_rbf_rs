@@ -206,3 +206,7 @@ cython_debug/
 .codex
 
 */site
+
+*.obj
+
+.agents

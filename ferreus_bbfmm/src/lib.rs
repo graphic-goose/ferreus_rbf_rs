@@ -24,6 +24,7 @@
 //! - Optimised low-rank M2L interactions that leverage symmetries and compression
 //! - Both adaptive and non-adaptive tree structures
 //! - Multiple right-hand sides
+//! - Optional simultaneous evaluation of kernel values and gradients
 //!
 //! # Example: Fast Matrix-Vector Product
 //!
@@ -95,7 +96,7 @@
 //!
 //! println!("Evaluated values at source locations: {:?}", target_values);
 //! ```
-//! 
+//!
 //! # Example: Fast Matrix-Vector Product with gradients
 //!
 //! ```
@@ -119,7 +120,7 @@
 //!        
 //!         -dist
 //!     }
-//! 
+//!
 //!     #[inline(always)]
 //!     fn evaluate_value_gradient(
 //!         &self,
@@ -197,7 +198,7 @@
 //!
 //! println!("Evaluated values at source locations: {:?}", target_values);
 //! println!("Evaluated gradients at source locations: {:?}", gradients);
-//! ``` 
+//! ```
 //!
 //! # Example: RBF Evaluator
 //!

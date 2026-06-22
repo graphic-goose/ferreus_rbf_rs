@@ -1,0 +1,110 @@
+site_name: "ferreus_rmt"
+site_url: "https://graphic-goose.github.io/ferreus_rbf_rs/ferreus_rmt/"
+
+theme:
+  variant: classic
+
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.expand
+    - navigation.indexes
+    - navigation.footer
+    - toc.integrate
+    - search.suggest
+    - search.highlight
+    - search.share
+    - content.tabs.link
+    - content.code.annotation
+    - content.code.copy
+    - toc.follow
+    - toc.integrate
+
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+copyright: Copyright &copy 2026, Maptek Pty Ltd. All rights reserved. Licensed under the MIT License.
+
+extra:
+  social:
+    - icon: fontawesome/brands/linkedin
+      link: https://linkedin.com/in/dan-owen
+
+extra_css:
+  - stylesheets/extras.css
+  - https://unpkg.com/katex@0/dist/katex.min.css
+
+plugins:
+- search
+- autorefs
+- mkdocstrings:
+    default_handler: python
+    handlers:
+      python:
+        paths: [ . ]
+        options:
+          members_order: source
+          allow_inspection: false
+          docstring_style: numpy
+          show_source: false
+          show_root_heading: true
+          show_symbol_type_toc: true
+          signature_crossrefs: true
+          docstring_section_style: table
+          merge_init_into_class: true
+          extra:
+            load_external_modules: false
+
+markdown_extensions:
+  - admonition
+  - def_list
+  - pymdownx.betterem
+  - pymdownx.blocks.caption
+  - pymdownx.caret
+  - pymdownx.mark
+  - pymdownx.tilde
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - pymdownx.snippets:
+      check_paths: true
+      base_path: .
+  - attr_list
+  - toc:
+      permalink: true
+      title: On this page
+  - md_in_html
+
+extra_javascript:
+  - javascripts/katex.js
+  - https://unpkg.com/katex@0/dist/katex.min.js
+  - https://unpkg.com/katex@0/dist/contrib/auto-render.min.js
+
+nav:
+  - Home: index.md
+  - Examples:
+    - Overview: examples.md
+    - Isosurface sphere: examples/isosurface_sphere.md
+    - Boundary closure: examples/boundary_closure.md
+  - API:
+      - Overview: api/index.md
+      - Isosurfacing:
+        - ClusterMethod: api/enums/ClusterMethod.md
+        - BoundaryClosure: api/enums/BoundaryClosure.md
+        - Mesh: api/Mesh.md
+        - Isosurface extraction: api/BuildIsosurface.md

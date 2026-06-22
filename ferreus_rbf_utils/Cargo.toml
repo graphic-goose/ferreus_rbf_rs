@@ -10,6 +10,9 @@ license = "MIT"
 keywords = ["rbf", "radial-basis", "interpolation"]
 rust-version = "1.85.0"
 
+[lib]
+crate-type = ["lib"]
+
 [dependencies]
 faer = "0.23.2"
 serde = { version = "1.0.228", features = ["derive", "rc"] }

@@ -58,8 +58,17 @@ pub fn ferreus_rbf(m: &Bound<'_, PyModule>) -> PyResult<()> {
         .set_item("ferreus_rbf.interpolant_config", interp)?;
 
     let isosurfacing = PyModule::new(m.py(), "isosurfacing")?;
-    isosurfacing.add_function(wrap_pyfunction!(python_bindings::surface_nets, &isosurfacing)?)?;
-    isosurfacing.add_function(wrap_pyfunction!(python_bindings::save_obj, &isosurfacing)?)?;
+    isosurfacing.add_class::<python_bindings::BoundaryClosure>()?;
+    isosurfacing.add_class::<python_bindings::ClusterMethod>()?;
+    isosurfacing.add_class::<python_bindings::Mesh>()?;
+    isosurfacing.add_function(wrap_pyfunction!(
+        python_bindings::build_isosurface,
+        &isosurfacing
+    )?)?;
+    isosurfacing.add_function(wrap_pyfunction!(
+        python_bindings::build_isosurfaces,
+        &isosurfacing
+    )?)?;
 
     m.add_submodule(&isosurfacing)?;
     m.py()
@@ -71,7 +80,8 @@ pub fn ferreus_rbf(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<python_bindings::Coefficients>()?;
     m.add_class::<python_bindings::GlobalTrend>()?;
     m.add_class::<python_bindings::RBFTestFunctions>()?;
-    m.add_function(wrap_pyfunction!(python_bindings::get_unique_indices, m)?)?;
+    m.add_class::<python_bindings::BoundaryClosure>()?;
+    m.add_class::<python_bindings::Mesh>()?;
 
     Ok(())
 }

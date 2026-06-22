@@ -323,7 +323,7 @@ impl DDMTree {
             active_point_indices = level_course_points;
         }
 
-        // Once the number of active points is less than the coarse threashold then
+        // Once the number of active points is less than the coarse threshold then
         // build a single domain for the coarse level.
         let mut coarse_level = Level::new(&active_point_indices);
 
