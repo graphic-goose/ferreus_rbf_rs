@@ -35,11 +35,8 @@ jobs:
 
       - name: Build with maturin
         uses: PyO3/maturin-action@v1
-        env:
-          # Keep memory-heavy Rust release builds within hosted-runner limits.
-          CARGO_BUILD_JOBS: "1"
-          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "1"
         with:
+          rust-toolchain: "1.85.0"
           command: build
           args: --release --strip --out dist -m py_ferreus_bbfmm/Cargo.toml ${{ matrix.extra-args }}
 
