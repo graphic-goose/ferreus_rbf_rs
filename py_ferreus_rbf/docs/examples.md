@@ -12,6 +12,10 @@ Below is a gallery of example workflows. Click any image or title to view the fu
 
     [![Isosurface linear interpolant](assets/images/isosurface_linear.png)](examples/isosurface_linear.md)
 
+-   [**Topography-clipped linear isosurface**](examples/isosurface_linear_topo.md)
+
+    [![Topography-clipped linear isosurface](assets/images/isosurface_linear_topo.png)](examples/isosurface_linear_topo.md)
+
 -   [**Isosurface trend linear interpolant**](examples/isosurface_trend_linear.md)
 
     [![Isosurface trend linear interpolant](assets/images/isosurface_trend_linear.png)](examples/isosurface_trend_linear.md)

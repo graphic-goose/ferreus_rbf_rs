@@ -35,7 +35,7 @@ def on_progress(event: ProgressEvent) -> None:
 
 
 # Define the input path for the example signed distance points
-project_root = Path(__file__).resolve().parent.parent
+project_root = Path(__file__).resolve().parents[2]
 pointset_path = project_root / "datasets" / "albatite_SD_points.csv"
 
 # Import the example points file
@@ -83,11 +83,10 @@ resolution = 5
 # When setting up the rbf evaluator for isosurfacing we need to add a buffer to the
 # extents of the evaluator so we don't end up trying to evaluate points outside the
 # extents of the evaluator.
-bbox_padding = 2
 evaluator_extents = np.hstack(
     (
-        extents[:3] - resolution * (bbox_padding + 1),
-        extents[3:] + resolution * (bbox_padding + 1),
+        extents[:3] - resolution * 10.0,
+        extents[3:] + resolution * 10.0,
     )
 )
 

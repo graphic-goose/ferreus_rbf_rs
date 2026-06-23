@@ -20,7 +20,7 @@ use ferreus_rbf::{
     progress::{ProgressMsg, ProgressSink, closure_sink},
 };
 use ferreus_rbf_utils;
-use std::{env, sync::Arc};
+use std::{env, path::Path, sync::Arc};
 
 /// Nice float formatter for filenames: trims trailing zeros and dots.
 fn fmt_num(x: f64) -> String {
@@ -71,8 +71,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cwd = env::current_dir().unwrap();
 
     // Define the filepath for the albatite test dataset
-    let file_path = cwd
-        .join("examples")
+    let file_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root")
         .join("datasets")
         .join("albatite_SD_points.csv");
 

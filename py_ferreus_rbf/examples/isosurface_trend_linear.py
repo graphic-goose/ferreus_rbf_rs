@@ -37,7 +37,7 @@ def on_progress(event: ProgressEvent) -> None:
 
 
 # Define the input path for the example signed distance points
-project_root = Path(__file__).resolve().parent.parent
+project_root = Path(__file__).resolve().parents[2]
 pointset_path = project_root / "datasets" / "albatite_SD_points.csv"
 
 # Import the example points file
