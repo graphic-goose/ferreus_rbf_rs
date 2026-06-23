@@ -36,7 +36,7 @@ Add the crate to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-ferreus_rbf = "0.2"
+ferreus_rbf = "0.2.2"
 ```
 
 Then construct an `RBFInterpolator` with your source points, values and

@@ -353,7 +353,7 @@ dependencies = [
 
 [[package]]
 name = "ferreus_rbf"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "csv",
  "faer",
@@ -1031,7 +1031,7 @@ dependencies = [
 
 [[package]]
 name = "py_ferreus_rbf"
-version = "0.2.0"
+version = "0.2.2"
 dependencies = [
  "faer",
  "faer-ext",

@@ -1,6 +1,6 @@
 [package]
 name = "ferreus_rbf"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2024"
 authors = ["Daniel Owen <daniel.owen@live.com.au>"]
 description = "Fast, memory efficient radial basis function (RBF) interpolation library"

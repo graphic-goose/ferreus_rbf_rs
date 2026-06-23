@@ -57,7 +57,7 @@ Add the desired crate to your `Cargo.toml`, for example:
 
 ```toml
 [dependencies]
-ferreus_rbf = "0.2"
+ferreus_rbf = "0.2.2"
 ```
 
 or
