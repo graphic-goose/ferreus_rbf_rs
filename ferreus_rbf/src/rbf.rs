@@ -630,11 +630,23 @@ impl RBFInterpolator {
         tree
     }
 
-    fn _get_evaluator_union_extents(&self, target_points: MatRef<f64>) -> Vec<f64> {
+    fn _get_evaluator_union_extents(&self, target_points: Option<MatRef<f64>>, target_extents: Option<&Vec<f64>>) -> Vec<f64> {
         let source_extents = ferreus_rbf_utils::get_pointarray_extents(self.points.as_ref());
-        let target_extents = ferreus_rbf_utils::get_pointarray_extents(target_points);
+        let target_extents = match target_points.is_some() {
+            true => Some(ferreus_rbf_utils::get_pointarray_extents(target_points.unwrap())),
+            false => {
+                match target_extents.is_some() {
+                    true => Some(target_extents.unwrap().to_vec()),
+                    false => None,
+                }
+            }
+        };
+        
+        let combined_extents = match target_extents.is_some() {
+            true => union_extents(&source_extents, target_extents.unwrap().as_slice()),
+            false => source_extents,
+        };
 
-        let combined_extents = union_extents(&source_extents, &target_extents);
         combined_extents
     }
 
@@ -665,7 +677,7 @@ impl RBFInterpolator {
         let adaptive = true;
         let sparse = false;
 
-        let extents = self._get_evaluator_union_extents(target_points);
+        let extents = self._get_evaluator_union_extents(Some(target_points), None);
 
         let mut tree = self._setup_fmmtree(adaptive, sparse, Some(extents));
 
@@ -717,7 +729,7 @@ impl RBFInterpolator {
         let adaptive = true;
         let sparse = false;
 
-        let extents = self._get_evaluator_union_extents(target_points);
+        let extents = self._get_evaluator_union_extents(Some(target_points), None);
 
         let mut tree = self._setup_fmmtree(adaptive, sparse, Some(extents));
 
@@ -975,7 +987,8 @@ impl RBFInterpolator {
         let dimensions = self.points.ncols();
         assert_eq!(dimensions, 3usize, "Only supported for 3D isosurfacing");
 
-        let mut evaluator_extents = extents.clone();
+        let mut evaluator_extents = self._get_evaluator_union_extents(None, Some(extents));
+
         evaluator_extents[0..dimensions]
             .iter_mut()
             .for_each(|val| *val -= resolution * 10.0);
