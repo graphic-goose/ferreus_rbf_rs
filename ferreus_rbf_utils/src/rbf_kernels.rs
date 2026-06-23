@@ -57,12 +57,12 @@ impl KernelFunction for LinearRbfKernel {
         let r2 = fill_diff_and_distance_sq(target, source, gradient_out);
         if r2 <= f64::EPSILON {
             gradient_out.fill(0.0);
-            return Some(-r2.sqrt());
+            return Some(-r2.sqrt() * self.var_contrib);
         }
 
         let r = r2.sqrt();
-        scale_in_place(gradient_out, -1.0 / r);
-        Some(-r)
+        scale_in_place(gradient_out, -self.var_contrib / r);
+        Some(-r * self.var_contrib)
     }
 }
 
@@ -118,9 +118,10 @@ impl KernelFunction for ThinPlateSplineRbfKernel {
         }
 
         let r = r2.sqrt();
-        let factor = 2.0 * r.ln() + 1.0;
+        let ln_r = r.ln();
+        let factor = self.var_contrib * (2.0 * ln_r + 1.0);
         scale_in_place(gradient_out, factor);
-        Some(r2 * r.ln())
+        Some(self.var_contrib * r2 * ln_r)
     }
 }
 
@@ -173,9 +174,9 @@ impl KernelFunction for CubicRbfKernel {
         }
 
         let r = r2.sqrt();
-        let factor = 3.0 * r;
+        let factor = 3.0 * self.var_contrib * r;
         scale_in_place(gradient_out, factor);
-        Some(r2 * r)
+        Some(self.var_contrib * r2 * r)
     }
 }
 
@@ -316,7 +317,7 @@ impl<S: SpheroidalSpec> KernelFunction for SpheroidalRbfKernel<S> {
         let sr2 = self.s2 * r2;
         if sr2 <= self.ip2 {
             let inv_r = 1.0 / r2.sqrt();
-            let factor = -self.near_slope * inv_r;
+            let factor = -self.var_contrib * self.near_slope * inv_r;
             scale_in_place(gradient_out, factor);
             return Some(self.eval_r2(r2));
         }
@@ -324,7 +325,7 @@ impl<S: SpheroidalSpec> KernelFunction for SpheroidalRbfKernel<S> {
         let t = 1.0 + sr2;
         let p = S::POW as f64 + 0.5;
         let denom = t.powf(p + 1.0);
-        let factor = -2.0 * p * self.s2 * self.far_coef / denom;
+        let factor = -2.0 * p * self.s2 * self.var_contrib * self.far_coef / denom;
         scale_in_place(gradient_out, factor);
         Some(self.eval_r2(r2))
     }
