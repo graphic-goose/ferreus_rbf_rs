@@ -114,6 +114,7 @@ pub mod progress;
 mod rbf;
 mod rbf_test_functions;
 mod rtree;
+mod serde_faer_mat;
 
 /// Functions related to isosurfacing algorithms
 pub mod isosurfacing {

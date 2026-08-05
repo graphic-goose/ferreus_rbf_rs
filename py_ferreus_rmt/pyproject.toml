@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "ferreus_rmt"
-version = "0.1.0"
+version = "0.1.1"
 readme = "README.md"
 license = "MIT"
 authors = [{ name = "Daniel Owen", email = "daniel.owen@live.com.au"}]

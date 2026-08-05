@@ -48,9 +48,11 @@ use std::{
 /// coefficients are stored in this struct and used during evaluation.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Coefficients {
+    #[serde(with = "crate::serde_faer_mat")]
     /// Coefficients associated with the RBF centers (data points).
     pub point_coefficients: Mat<f64>,
 
+    #[serde(with = "crate::serde_faer_mat::option")]
     /// Coefficients associated with the polynomial drift term, if present.
     ///
     /// This is `None` when no polynomial component was included in the
@@ -265,9 +267,11 @@ impl RBFInterpolatorBuilder {
 #[doc = include_str!("../docs/rbf_interpolator.md")]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RBFInterpolator {
+    #[serde(with = "crate::serde_faer_mat")]
     /// Coordinates of the input data points.
     pub points: Mat<f64>,
 
+    #[serde(with = "crate::serde_faer_mat")]
     /// Scalar values at each input point.
     pub point_values: Mat<f64>,
 
@@ -630,18 +634,22 @@ impl RBFInterpolator {
         tree
     }
 
-    fn _get_evaluator_union_extents(&self, target_points: Option<MatRef<f64>>, target_extents: Option<&Vec<f64>>) -> Vec<f64> {
+    fn _get_evaluator_union_extents(
+        &self,
+        target_points: Option<MatRef<f64>>,
+        target_extents: Option<&Vec<f64>>,
+    ) -> Vec<f64> {
         let source_extents = ferreus_rbf_utils::get_pointarray_extents(self.points.as_ref());
         let target_extents = match target_points.is_some() {
-            true => Some(ferreus_rbf_utils::get_pointarray_extents(target_points.unwrap())),
-            false => {
-                match target_extents.is_some() {
-                    true => Some(target_extents.unwrap().to_vec()),
-                    false => None,
-                }
-            }
+            true => Some(ferreus_rbf_utils::get_pointarray_extents(
+                target_points.unwrap(),
+            )),
+            false => match target_extents.is_some() {
+                true => Some(target_extents.unwrap().to_vec()),
+                false => None,
+            },
         };
-        
+
         let combined_extents = match target_extents.is_some() {
             true => union_extents(&source_extents, target_extents.unwrap().as_slice()),
             false => source_extents,
@@ -1586,6 +1594,55 @@ impl Error for ModelIOError {
                 Some(source)
             }
             ModelIOError::FormatMismatch { .. } | ModelIOError::VersionMismatch { .. } => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod serialization_tests {
+    use super::*;
+    use crate::interpolant_config::RBFKernelType;
+    use faer::mat;
+
+    #[test]
+    fn save_and_load_model_round_trips_matrix_fields() {
+        let points = mat![[0.0], [1.0], [2.0]];
+        let point_values = mat![[1.0], [2.0], [3.0]];
+        let settings = InterpolantSettings::builder(RBFKernelType::Linear).build();
+        let path = std::env::temp_dir().join(format!(
+            "ferreus_rbf_round_trip_{}.json",
+            std::process::id()
+        ));
+
+        let rbfi = RBFInterpolator::builder(points, point_values, settings).build();
+        rbfi.save_model(&path).unwrap();
+
+        let loaded = RBFInterpolator::load_model(&path, None).unwrap();
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(loaded.points.nrows(), rbfi.points.nrows());
+        assert_eq!(loaded.points.ncols(), rbfi.points.ncols());
+        assert_eq!(loaded.point_values.nrows(), rbfi.point_values.nrows());
+        assert_eq!(loaded.point_values.ncols(), rbfi.point_values.ncols());
+        assert_eq!(
+            loaded.coefficients.point_coefficients.nrows(),
+            rbfi.coefficients.point_coefficients.nrows()
+        );
+        assert_eq!(
+            loaded.coefficients.point_coefficients.ncols(),
+            rbfi.coefficients.point_coefficients.ncols()
+        );
+
+        for i in 0..rbfi.points.nrows() {
+            for j in 0..rbfi.points.ncols() {
+                assert_eq!(loaded.points[(i, j)], rbfi.points[(i, j)]);
+            }
+        }
+
+        for i in 0..rbfi.point_values.nrows() {
+            for j in 0..rbfi.point_values.ncols() {
+                assert_eq!(loaded.point_values[(i, j)], rbfi.point_values[(i, j)]);
+            }
         }
     }
 }

@@ -122,9 +122,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let isovalue = 20.0;
 
     // Define the isosurfacing extents: [minx, miny, minz, maxx, maxy, maxz].
-    let extents = vec![
-        329105.0, 7744370.0, -320.0, 329845.0, 7745275.0, 435.0,
-    ];
+    let extents = vec![329105.0, 7744370.0, -320.0, 329845.0, 7745275.0, 435.0];
 
     // When setting up the RBF evaluators for isosurfacing we need to add a buffer to
     // the evaluator extents so we don't evaluate points outside the evaluator domains.
@@ -159,15 +157,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // The surfacer calls this closure with batches of 3D sample locations.
         // It expects one scalar value per sample. The zero contour of those returned
         // values is the surface that will be extracted.
-        let rbf_values = rbfi_surface
-            .borrow_mut()
-            .evaluate_targets(targets.as_ref());
+        let rbf_values = rbfi_surface.borrow_mut().evaluate_targets(targets.as_ref());
 
         // The topography interpolant is 2D: it maps XY locations to a topographic Z
         // elevation. For every 3D sample point, evaluate the topography directly
         // below or above it using only the sample's X and Y coordinates.
-        let topo_targets =
-            Mat::<f64>::from_fn(targets.nrows(), 2, |row, col| targets[(row, col)]);
+        let topo_targets = Mat::<f64>::from_fn(targets.nrows(), 2, |row, col| targets[(row, col)]);
         let topo_values = topo_surface
             .borrow_mut()
             .evaluate_targets(topo_targets.as_ref());

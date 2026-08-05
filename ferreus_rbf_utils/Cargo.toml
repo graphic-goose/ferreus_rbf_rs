@@ -1,6 +1,6 @@
 [package]
 name = "ferreus_rbf_utils"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 authors = ["Daniel Owen <daniel.owen@live.com.au>"]
 description = "Helper utilities for the ferreus_rbf crate"
@@ -8,15 +8,15 @@ readme = "README.md"
 repository = "https://github.com/graphic-goose/ferreus_rbf_rs"
 license = "MIT"
 keywords = ["rbf", "radial-basis", "interpolation"]
-rust-version = "1.85.0"
+rust-version = "1.97.1"
 
 [lib]
 crate-type = ["lib"]
 
 [dependencies]
-faer = "0.23.2"
+faer = "0.24.4"
 serde = { version = "1.0.228", features = ["derive", "rc"] }
-ferreus_bbfmm = "0.2.0"
+ferreus_bbfmm = "0.3.0"
 
 [profile.dev.package.faer]
 opt-level = 3

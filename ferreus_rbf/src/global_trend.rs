@@ -127,7 +127,10 @@ pub enum GlobalTrend {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GlobalTrendTransform {
+    #[serde(with = "crate::serde_faer_mat")]
     affine_transform: Mat<f64>,
+
+    #[serde(with = "crate::serde_faer_mat")]
     inverse_transform: Mat<f64>,
 }
 

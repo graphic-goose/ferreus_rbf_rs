@@ -1,6 +1,6 @@
 [package]
 name = "ferreus_rmt"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 authors = ["Daniel Owen <daniel.owen@live.com.au>"]
 description = "Fast, surface-following regularised marching tetrahedra isosurface extraction"
@@ -8,13 +8,13 @@ readme = "README.md"
 repository = "https://github.com/graphic-goose/ferreus_rbf_rs"
 license = "MIT"
 keywords = ["isosurface", "marching", "tetrahedra", "rmt", "mesh"]
-rust-version = "1.85.0"
+rust-version = "1.97.1"
 
 [lib]
 crate-type = ["lib"]
 
 [dependencies]
-faer = "0.23.2"
+faer = "0.24.4"
 rstar = "0.12.2"
 spade = "2.15.1"
 
