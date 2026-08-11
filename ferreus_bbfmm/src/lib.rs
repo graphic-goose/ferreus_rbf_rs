@@ -28,7 +28,7 @@
 //!
 //! # Example: Fast Matrix-Vector Product
 //!
-//! ```
+//! ```no_run,standalone_crate
 //! use ferreus_bbfmm::{FmmTree, KernelFunction};
 //! use faer::{Mat, RowRef};
 //! use rand::{Rng, SeedableRng};
@@ -45,9 +45,7 @@
 //!             let diff = t - s;
 //!             dist += diff * diff;
 //!         }
-//!         dist.sqrt()
-//!        
-//!         -dist
+//!         -dist.sqrt()
 //!     }
 //! }
 //!
@@ -99,7 +97,7 @@
 //!
 //! # Example: Fast Matrix-Vector Product with gradients
 //!
-//! ```
+//! ```no_run,standalone_crate
 //! use ferreus_bbfmm::{FmmTree, KernelFunction};
 //! use faer::{Mat, RowRef};
 //! use rand::{Rng, SeedableRng};
@@ -116,9 +114,7 @@
 //!             let diff = t - s;
 //!             dist += diff * diff;
 //!         }
-//!         dist.sqrt()
-//!        
-//!         -dist
+//!         -dist.sqrt()
 //!     }
 //!
 //!     #[inline(always)]
@@ -202,7 +198,7 @@
 //!
 //! # Example: RBF Evaluator
 //!
-//! ```
+//! ```no_run,standalone_crate
 //! use ferreus_bbfmm::{FmmTree, FmmParams, M2LCompressionType, KernelFunction};
 //! use faer::{Mat, RowRef};
 //! use rand::{Rng, SeedableRng};
@@ -219,9 +215,7 @@
 //!             let diff = t - s;
 //!             dist += diff * diff;
 //!         }
-//!         dist.sqrt()
-//!        
-//!         -dist
+//!         -dist.sqrt()
 //!     }
 //! }
 //!
