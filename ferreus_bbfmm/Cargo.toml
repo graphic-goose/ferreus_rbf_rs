@@ -14,8 +14,8 @@ rust-version = "1.97.1"
 crate-type = ["lib"]
 
 [dependencies]
-faer = "0.24.4"
-rayon = "1.11.0"
+faer.workspace = true
+rayon.workspace = true
 itertools = "0.14.0"
 
 [dev-dependencies]
