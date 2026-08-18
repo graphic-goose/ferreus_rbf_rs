@@ -16,7 +16,7 @@ crate-type = ["lib"]
 [dependencies]
 faer = "0.24.4"
 serde = { version = "1.0.228", features = ["derive", "rc"] }
-ferreus_bbfmm = "0.3.0"
+ferreus_bbfmm = {path = "../ferreus_bbfmm", version = "0.3.0"}
 
 [profile.dev.package.faer]
 opt-level = 3
