@@ -9,3 +9,7 @@ members = [
     "py_ferreus_bbfmm",
     "py_ferreus_rmt",
 ]
+
+[workspace.dependencies]
+faer = "0.24.4"
+rayon = "1.11.0"

@@ -14,7 +14,7 @@ rust-version = "1.97.1"
 crate-type = ["lib"]
 
 [dependencies]
-faer = "0.24.4"
+faer.workspace = true
 rstar = "0.12.2"
 spade = "2.15.1"
 
