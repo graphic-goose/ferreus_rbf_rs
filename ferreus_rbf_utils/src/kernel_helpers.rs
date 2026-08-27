@@ -33,10 +33,6 @@ pub struct KernelParams {
     /// Works in combination with base_range and the kernel degree.
     /// Only used in spheroidal kernels.
     pub total_sill: f64,
-
-    /// The variance contribution for this kernel. Represents the portion of total
-    /// variance that this kernel contributes to the interpolation model.
-    pub var_contrib: f64,
 }
 
 impl KernelParams {
@@ -46,7 +42,6 @@ impl KernelParams {
             kernel_type,
             base_range: 1.0,
             total_sill: 1.0,
-            var_contrib: 1.0,
         }
     }
 }
@@ -57,7 +52,6 @@ pub struct KernelParamsBuilder {
     kernel_type: KernelType,
     base_range: f64,
     total_sill: f64,
-    var_contrib: f64,
 }
 
 impl KernelParamsBuilder {
@@ -73,12 +67,6 @@ impl KernelParamsBuilder {
         self
     }
 
-    /// Sets the `var_contrib` (variance contribution) parameter on the builder.
-    pub fn var_contrib(mut self, v: f64) -> Self {
-        self.var_contrib = v;
-        self
-    }
-
     /// Finalises the builder into a [`KernelParams`] value.
     pub fn build(self) -> KernelParams {
         assert!(self.base_range > 0.0);
@@ -87,7 +75,6 @@ impl KernelParamsBuilder {
             kernel_type: self.kernel_type,
             base_range: self.base_range,
             total_sill: self.total_sill,
-            var_contrib: self.var_contrib,
         }
     }
 }

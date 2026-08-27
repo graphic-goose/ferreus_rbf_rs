@@ -22,21 +22,12 @@ use std::marker::PhantomData;
 
 /// Linear RBF kernel with `phi(r) = -r`.
 #[derive(Clone, Debug, Copy)]
-pub struct LinearRbfKernel {
-    /// Variance contribution for this kernel.
-    pub var_contrib: f64,
-}
+pub struct LinearRbfKernel;
 
 impl LinearRbfKernel {
-    /// Creates a new LinearRbfKernel with the specified variance contribution.
-    #[inline(always)]
-    pub fn new(var_contrib: f64) -> Self {
-        Self { var_contrib }
-    }
-
     #[inline(always)]
     pub fn phi(&self, r: f64) -> f64 {
-        -r * self.var_contrib
+        -r
     }
 }
 
@@ -57,41 +48,32 @@ impl KernelFunction for LinearRbfKernel {
         let r2 = fill_diff_and_distance_sq(target, source, gradient_out);
         if r2 <= f64::EPSILON {
             gradient_out.fill(0.0);
-            return Some(-r2.sqrt() * self.var_contrib);
+            return Some(-r2.sqrt());
         }
 
         let r = r2.sqrt();
-        scale_in_place(gradient_out, -self.var_contrib / r);
-        Some(-r * self.var_contrib)
+        scale_in_place(gradient_out, -1.0 / r);
+        Some(-r)
     }
 }
 
 impl KernelFromParams for LinearRbfKernel {
     #[inline(always)]
-    fn from_params(p: &KernelParams) -> Self {
-        Self::new(p.var_contrib)
+    fn from_params(_: &KernelParams) -> Self {
+        LinearRbfKernel
     }
 }
 
 /// Thin plate spline RBF kernel with `phi(r) = r^2 log r`.
 #[derive(Clone, Debug, Copy)]
-pub struct ThinPlateSplineRbfKernel {
-    /// Variance contribution for this kernel.
-    pub var_contrib: f64,
-}
+pub struct ThinPlateSplineRbfKernel;
 
 impl ThinPlateSplineRbfKernel {
-    /// Creates a new ThinPlateSplineRbfKernel with the specified variance contribution.
-    #[inline(always)]
-    pub fn new(var_contrib: f64) -> Self {
-        Self { var_contrib }
-    }
-
     #[inline(always)]
     pub fn phi(&self, r: f64) -> f64 {
         match r.abs() < f64::EPSILON {
             true => 0.0,
-            false => self.var_contrib * r.powi(2) * r.ln(),
+            false => r.powi(2) * r.ln(),
         }
     }
 }
@@ -118,37 +100,27 @@ impl KernelFunction for ThinPlateSplineRbfKernel {
         }
 
         let r = r2.sqrt();
-        let ln_r = r.ln();
-        let factor = self.var_contrib * (2.0 * ln_r + 1.0);
+        let factor = 2.0 * r.ln() + 1.0;
         scale_in_place(gradient_out, factor);
-        Some(self.var_contrib * r2 * ln_r)
+        Some(r2 * r.ln())
     }
 }
 
 impl KernelFromParams for ThinPlateSplineRbfKernel {
     #[inline(always)]
-    fn from_params(p: &KernelParams) -> Self {
-        Self::new(p.var_contrib)
+    fn from_params(_: &KernelParams) -> Self {
+        ThinPlateSplineRbfKernel
     }
 }
 
 /// Cubic RBF kernel with `phi(r) = r^3`.
 #[derive(Clone, Debug, Copy)]
-pub struct CubicRbfKernel {
-    /// Variance contribution for this kernel.
-    pub var_contrib: f64,
-}
+pub struct CubicRbfKernel;
 
 impl CubicRbfKernel {
-    /// Creates a new CubicRbfKernel with the specified variance contribution.
-    #[inline(always)]
-    pub fn new(var_contrib: f64) -> Self {
-        Self { var_contrib }
-    }
-
     #[inline(always)]
     pub fn phi(&self, r: f64) -> f64 {
-        self.var_contrib * r.powi(3)
+        r.powi(3)
     }
 }
 
@@ -174,16 +146,16 @@ impl KernelFunction for CubicRbfKernel {
         }
 
         let r = r2.sqrt();
-        let factor = 3.0 * self.var_contrib * r;
+        let factor = 3.0 * r;
         scale_in_place(gradient_out, factor);
-        Some(self.var_contrib * r2 * r)
+        Some(r2 * r)
     }
 }
 
 impl KernelFromParams for CubicRbfKernel {
     #[inline(always)]
-    fn from_params(p: &KernelParams) -> Self {
-        Self::new(p.var_contrib)
+    fn from_params(_: &KernelParams) -> Self {
+        CubicRbfKernel
     }
 }
 
@@ -244,7 +216,6 @@ pub struct SpheroidalRbfKernel<S: SpheroidalSpec> {
     // user inputs
     pub base_range: f64,
     pub total_sill: f64,
-    pub var_contrib: f64,
 
     // derived (computed once)
     s2: f64,         // s^2
@@ -256,13 +227,12 @@ pub struct SpheroidalRbfKernel<S: SpheroidalSpec> {
 
 impl<S: SpheroidalSpec> SpheroidalRbfKernel<S> {
     #[inline(always)]
-    pub fn new(base_range: f64, total_sill: f64, var_contrib: f64) -> Self {
+    pub fn new(base_range: f64, total_sill: f64) -> Self {
         let c = S::constants();
         let s = c.range_scaling / base_range;
         Self {
             base_range,
             total_sill,
-            var_contrib,
             s2: s * s,
             ip2: c.inflexion_point * c.inflexion_point,
             near_slope: total_sill * c.linear_slope * s,
@@ -274,7 +244,7 @@ impl<S: SpheroidalSpec> SpheroidalRbfKernel<S> {
     #[inline(always)]
     pub fn eval_r2(&self, r2: f64) -> f64 {
         let sr2 = self.s2 * r2;
-        let result = if sr2 <= self.ip2 {
+        if sr2 <= self.ip2 {
             // near: total_sill - near_slope * r
             let r = r2.sqrt();
             self.total_sill - self.near_slope * r
@@ -282,8 +252,7 @@ impl<S: SpheroidalSpec> SpheroidalRbfKernel<S> {
             // far: far_coef / (t^POW * sqrt(t)),  t = 1 + (s r)^2
             let t = 1.0 + sr2;
             self.far_coef / (t.powi(S::POW) * t.sqrt())
-        };
-        self.var_contrib * result
+        }
     }
 
     #[inline(always)]
@@ -317,7 +286,7 @@ impl<S: SpheroidalSpec> KernelFunction for SpheroidalRbfKernel<S> {
         let sr2 = self.s2 * r2;
         if sr2 <= self.ip2 {
             let inv_r = 1.0 / r2.sqrt();
-            let factor = -self.var_contrib * self.near_slope * inv_r;
+            let factor = -self.near_slope * inv_r;
             scale_in_place(gradient_out, factor);
             return Some(self.eval_r2(r2));
         }
@@ -325,7 +294,7 @@ impl<S: SpheroidalSpec> KernelFunction for SpheroidalRbfKernel<S> {
         let t = 1.0 + sr2;
         let p = S::POW as f64 + 0.5;
         let denom = t.powf(p + 1.0);
-        let factor = -2.0 * p * self.s2 * self.var_contrib * self.far_coef / denom;
+        let factor = -2.0 * p * self.s2 * self.far_coef / denom;
         scale_in_place(gradient_out, factor);
         Some(self.eval_r2(r2))
     }
@@ -334,7 +303,7 @@ impl<S: SpheroidalSpec> KernelFunction for SpheroidalRbfKernel<S> {
 impl<S: SpheroidalSpec> KernelFromParams for SpheroidalRbfKernel<S> {
     #[inline(always)]
     fn from_params(p: &KernelParams) -> Self {
-        Self::new(p.base_range, p.total_sill, p.var_contrib)
+        Self::new(p.base_range, p.total_sill)
     }
 }
 
@@ -349,24 +318,15 @@ pub type Spheroidal9RbfKernel = SpheroidalRbfKernel<Order9>;
 
 /// WendlandsC2 RBF kernel.
 #[derive(Clone, Debug, Copy)]
-pub struct WendlandsC2RbfKernel {
-    /// Variance contribution for this kernel.
-    pub var_contrib: f64,
-}
+pub struct WendlandsC2RbfKernel;
 
 impl WendlandsC2RbfKernel {
-    /// Creates a new WendlandsC2RbfKernel with the specified variance contribution.
-    #[inline(always)]
-    pub fn new(var_contrib: f64) -> Self {
-        Self { var_contrib }
-    }
-
     #[inline(always)]
     pub fn phi(&self, r: f64) -> f64 {
         match r < 1.0 {
             true => {
                 let v = 1.0 - r;
-                self.var_contrib * (v * v * v * v) * (4.0 * r + 1.0)
+                (v * v * v * v) * (4.0 * r + 1.0)
             }
             false => 0.0,
         }
@@ -383,29 +343,20 @@ impl KernelFunction for WendlandsC2RbfKernel {
 
 impl KernelFromParams for WendlandsC2RbfKernel {
     #[inline(always)]
-    fn from_params(p: &KernelParams) -> Self {
-        Self::new(p.var_contrib)
+    fn from_params(_: &KernelParams) -> Self {
+        WendlandsC2RbfKernel
     }
 }
 
 /// Spherical RBF kernel.
 #[derive(Clone, Debug, Copy)]
-pub struct SphericalRbfKernel {
-    pub var_contrib: f64,
-}
+pub struct SphericalRbfKernel;
 
 impl SphericalRbfKernel {
     #[inline(always)]
-    pub fn new(var_contrib: f64) -> Self {
-        Self { var_contrib }
-    }
-
-    #[inline(always)]
     pub fn phi(&self, r: f64) -> f64 {
         match r < 1.0 {
-            true => {
-                self.var_contrib * (1.0 - r * (1.5 - 0.5 * r * r))
-            }
+            true => 1.0 - r * (1.5 - 0.5 * r * r),
             false => 0.0,
         }
     }
@@ -421,26 +372,19 @@ impl KernelFunction for SphericalRbfKernel {
 
 impl KernelFromParams for SphericalRbfKernel {
     #[inline(always)]
-    fn from_params(p: &KernelParams) -> Self {
-        Self::new(p.var_contrib)
+    fn from_params(_: &KernelParams) -> Self {
+        SphericalRbfKernel
     }
 }
 
 /// Exponential RBF kernel.
 #[derive(Clone, Debug, Copy)]
-pub struct ExponentialRbfKernel {
-    pub var_contrib: f64,
-}
+pub struct ExponentialRbfKernel;
 
 impl ExponentialRbfKernel {
     #[inline(always)]
-    pub fn new(var_contrib: f64) -> Self {
-        Self { var_contrib }
-    }
-
-    #[inline(always)]
     pub fn phi(&self, r: f64) -> f64 {
-        self.var_contrib * (-3.0 * r).exp()
+        (-3.0 * r).exp()
     }
 }
 
@@ -454,26 +398,19 @@ impl KernelFunction for ExponentialRbfKernel {
 
 impl KernelFromParams for ExponentialRbfKernel {
     #[inline(always)]
-    fn from_params(p: &KernelParams) -> Self {
-        Self::new(p.var_contrib)
+    fn from_params(_: &KernelParams) -> Self {
+        ExponentialRbfKernel
     }
 }
 
 /// Gaussian RBF kernel.
 #[derive(Clone, Debug, Copy)]
-pub struct GaussianRbfKernel {
-    pub var_contrib: f64,
-}
+pub struct GaussianRbfKernel;
 
 impl GaussianRbfKernel {
     #[inline(always)]
-    pub fn new(var_contrib: f64) -> Self {
-        Self { var_contrib }
-    }
-
-    #[inline(always)]
     pub fn phi(&self, r: f64) -> f64 {
-        self.var_contrib * (-3.0 * r * r).exp()
+        (-3.0 * r * r).exp()
     }
 }
 
@@ -487,23 +424,16 @@ impl KernelFunction for GaussianRbfKernel {
 
 impl KernelFromParams for GaussianRbfKernel {
     #[inline(always)]
-    fn from_params(p: &KernelParams) -> Self {
-        Self::new(p.var_contrib)
+    fn from_params(_: &KernelParams) -> Self {
+        GaussianRbfKernel
     }
 }
 
 /// Cubic RBF kernel as defined by Chiles, Delfiner (1999).
 #[derive(Clone, Debug, Copy)]
-pub struct Cubic2RbfKernel {
-    pub var_contrib: f64,
-}
+pub struct Cubic2RbfKernel;
 
 impl Cubic2RbfKernel {
-    #[inline(always)]
-    pub fn new(var_contrib: f64) -> Self {
-        Self { var_contrib }
-    }
-
     #[inline(always)]
     pub fn phi(&self, r: f64) -> f64 {
         match r < 1.0 {
@@ -512,7 +442,7 @@ impl Cubic2RbfKernel {
                 let d3 = d2 * r;
                 let d5 = d3 * d2;
                 let d7 = d5 * d2;
-                self.var_contrib * (1.0 - 7.0 * d2 + 8.75 * d3 - 3.5 * d5 + 0.75 * d7)
+                1.0 - 7.0 * d2 + 8.75 * d3 - 3.5 * d5 + 0.75 * d7
             }
             false => 0.0,
         }
@@ -529,8 +459,8 @@ impl KernelFunction for Cubic2RbfKernel {
 
 impl KernelFromParams for Cubic2RbfKernel {
     #[inline(always)]
-    fn from_params(p: &KernelParams) -> Self {
-        Self::new(p.var_contrib)
+    fn from_params(_: &KernelParams) -> Self {
+        Cubic2RbfKernel
     }
 }
 
@@ -538,21 +468,14 @@ impl KernelFromParams for Cubic2RbfKernel {
 ///
 /// Kernel decay is scaled to ~align with other kernels.
 #[derive(Clone, Debug, Copy)]
-pub struct InverseMultiquadraticRbfKernel {
-    pub var_contrib: f64,
-}
+pub struct InverseMultiquadraticRbfKernel;
 
 impl InverseMultiquadraticRbfKernel {
     const KM_SQ: f64 = 42.25;  // 6.5 ^ 2
 
     #[inline(always)]
-    pub fn new(var_contrib: f64) -> Self {
-        Self { var_contrib }
-    }
-
-    #[inline(always)]
     pub fn phi(&self, r: f64) -> f64 {
-        self.var_contrib / (1.0 + r * r * Self::KM_SQ).sqrt()
+        1.0 / (1.0 + r * r * Self::KM_SQ).sqrt()
     }
 }
 
@@ -566,8 +489,8 @@ impl KernelFunction for InverseMultiquadraticRbfKernel {
 
 impl KernelFromParams for InverseMultiquadraticRbfKernel {
     #[inline(always)]
-    fn from_params(p: &KernelParams) -> Self {
-        Self::new(p.var_contrib)
+    fn from_params(_: &KernelParams) -> Self {
+        InverseMultiquadraticRbfKernel
     }
 }
 

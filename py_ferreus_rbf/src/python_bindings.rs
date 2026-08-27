@@ -539,7 +539,6 @@ impl InterpolantSettings {
                         false => FittingAccuracy::default().inner,
                     }
                 },
-                var_contrib: 1.0,  // Temporary; can expose this to python side
             },
         })
     }
