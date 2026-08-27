@@ -309,16 +309,6 @@ pub struct DuplicatesRemoved {
 }
 
 #[pyclass]
-pub struct EvaluationProgress {
-    #[pyo3(get)]
-    pub evaluated: usize,
-    #[pyo3(get)]
-    pub total: usize,
-    #[pyo3(get)]
-    pub progress: f64,
-}
-
-#[pyclass]
 pub struct Message {
     #[pyo3(get)]
     pub message: String,
@@ -357,11 +347,6 @@ fn map_msg_to_py(py: Python<'_>, msg: ferreus_rbf::progress::ProgressMsg) -> Py<
         ferreus_rbf::progress::ProgressMsg::DuplicatesRemoved { num_duplicates } => {
             Py::new(py, DuplicatesRemoved { num_duplicates })
                 .expect("alloc DuplicatesRemoved")
-                .into()
-        }
-        ferreus_rbf::progress::ProgressMsg::EvaluationProgress { evaluated, total, progress } => {
-            Py::new(py, EvaluationProgress { evaluated, total, progress })
-                .expect("alloc EvaluationProgress")
                 .into()
         }
         ferreus_rbf::progress::ProgressMsg::Message { message } => Py::new(py, Message { message })

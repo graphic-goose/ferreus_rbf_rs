@@ -99,18 +99,6 @@ let (sink, _listener) = closure_sink(256, |msg| match msg {
             progress * 100.0
         );
     }
-    ProgressMsg::EvaluationProgress {
-        evaluated,
-        total,
-        progress,
-    } => {
-        println!(
-            "Evaluating: {:>6} / {:>6}    {:>.1}%",
-            evaluated,
-            total,
-            progress * 100.0
-        );
-    }
     ProgressMsg::SurfacingProgress {
         isovalue,
         stage,

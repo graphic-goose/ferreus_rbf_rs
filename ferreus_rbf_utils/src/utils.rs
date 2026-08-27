@@ -436,14 +436,6 @@ macro_rules! for_each_kernel {
                 }
             }
 
-            /// Sets an optional progress callback for reporting evaluation progress.
-            #[inline]
-            pub fn set_progress_callback(&mut self, callback: Option<ferreus_bbfmm::ProgressCallback>) {
-                match self {
-                    $( Self::$V(t) => t.set_progress_callback(callback), )*
-                }
-            }
-
             /// Evaluates the FMM at the supplied target points.
             #[inline]
             pub fn evaluate(

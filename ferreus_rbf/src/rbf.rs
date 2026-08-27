@@ -599,7 +599,6 @@ impl RBFInterpolator {
     ///   the settings used when solving.
     /// - `params`: Optional solver/algorithm parameters (used for thread pool
     ///   configuration during evaluation).
-    /// - `progress_callback`: Optional callback for reporting progress.
     /// - `target_extents`: Optional target domain extents to use for building
     ///   the evaluator. If provided, the evaluator will be built with the union
     ///   of source point extents and target extents. Format: 
@@ -610,7 +609,6 @@ impl RBFInterpolator {
         coefficients: Coefficients,
         interpolant_settings: InterpolantSettings,
         params: Option<Params>,
-        progress_callback: Option<Arc<dyn ProgressSink>>,
         target_extents: Option<Vec<f64>>,
     ) -> Self {
         let dimensions = points.ncols();
@@ -648,7 +646,7 @@ impl RBFInterpolator {
             params,
             evaluator: None,
             global_trend: None,
-            progress_callback,
+            progress_callback: None,
         };
 
         // If target extents are provided, build evaluator with union of source and target extents
@@ -659,19 +657,6 @@ impl RBFInterpolator {
         }
 
         interpolator
-    }
-
-    /// Sets the progress callback for reporting solver and evaluation progress.
-    ///
-    /// # Arguments
-    /// * `callback` - Optional callback for reporting progress. Pass `None` to disable.
-    pub fn set_progress_callback(&mut self, callback: Option<Arc<dyn ProgressSink>>) {
-        self.progress_callback = callback;
-    }
-
-    /// Returns a clone of the current progress callback.
-    pub fn get_progress_callback(&self) -> Option<Arc<dyn ProgressSink>> {
-        self.progress_callback.clone()
     }
 
     #[doc(hidden)]
@@ -957,14 +942,6 @@ impl RBFInterpolator {
     /// ```
     pub fn evaluate_targets(&mut self, target_points: MatRef<f64>) -> Mat<f64> {
         let mut tree = self.evaluator.as_mut().unwrap();
-
-        // Set up progress callback on the FMM tree
-        if let Some(sink) = &self.progress_callback {
-            let sink = sink.clone();
-            tree.set_progress_callback(Some(std::sync::Arc::new(move |evaluated, total, progress| {
-                sink.emit(ProgressMsg::EvaluationProgress { evaluated, total, progress });
-            })));
-        }
 
         let evaluator_params = EvaluatorParams {
             tree: &mut tree,
