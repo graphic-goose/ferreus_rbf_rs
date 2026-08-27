@@ -14,7 +14,7 @@ use crate::{
         SPHEROIDAL_CONSTANTS_FIVE, SPHEROIDAL_CONSTANTS_NINE, SPHEROIDAL_CONSTANTS_SEVEN,
         SPHEROIDAL_CONSTANTS_THREE, SpheroidalConstants,
     },
-    utils::{fill_diff_and_distance_sq, scale_in_place},
+    utils::{distance_sq, fill_diff_and_distance_sq, scale_in_place},
 };
 use faer::RowRef;
 use ferreus_bbfmm::KernelFunction;
@@ -265,7 +265,7 @@ impl<S: SpheroidalSpec> SpheroidalRbfKernel<S> {
 impl<S: SpheroidalSpec> KernelFunction for SpheroidalRbfKernel<S> {
     #[inline(always)]
     fn evaluate(&self, target: RowRef<f64>, source: RowRef<f64>) -> f64 {
-        let r2 = get_distance_sq(target, source);
+        let r2 = distance_sq(target, source);
         self.eval_r2(r2)
     }
 
@@ -492,15 +492,4 @@ impl KernelFromParams for InverseMultiquadraticRbfKernel {
     fn from_params(_: &KernelParams) -> Self {
         InverseMultiquadraticRbfKernel
     }
-}
-
-/// Returns the squared Euclidean distance between two points.
-#[inline(always)]
-pub fn get_distance_sq(target: RowRef<f64>, source: RowRef<f64>) -> f64 {
-    let mut dist = 0.0;
-    for (t, s) in target.iter().zip(source.iter()) {
-        let diff = t - s;
-        dist += diff * diff;
-    }
-    dist
 }
