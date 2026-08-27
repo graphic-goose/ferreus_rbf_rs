@@ -157,7 +157,7 @@ class FmmKernelType(Enum):
     $$
     \varphi(r) =
     \begin{cases}
-        (1-r)^4 (4r + 1), & r < 1,\\
+        (1 - r)^4 (4r + 1), & r < 1,\\
         0, & r \ge 1
     \end{cases}
     $$
