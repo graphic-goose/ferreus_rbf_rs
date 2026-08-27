@@ -162,13 +162,15 @@ class SpheroidalOrder(Enum):
 
 class FittingAccuracyType(Enum):
     """Defines whether to use relative or absolute stopping criteria for the solver."""
-    Absolute = 0
-    """The mismatch must be reduced by this factor compared to the initial mismatch."""
-
-    Relative = 1
+    
+    Relative = 0
+    """The mismatch must be reduced by this factor compared to the initial mismatch."""    
+    
+    Absolute = 1
     """The mismatch must be less than this fixed amount in the same units as the
         data values.
     """
+
 
 class FittingAccuracy:
     """

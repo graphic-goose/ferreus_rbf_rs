@@ -58,6 +58,10 @@ where
         FittingAccuracyType::Relative => r.col(0).norm_l2(),
     };
 
+    if beta < f64::EPSILON {
+        return x;
+    }
+
     let mut iteration = 1usize;
 
     let mut v = Mat::<f64>::zeros(n, max_inner_iterations + 1);
@@ -146,8 +150,7 @@ where
                     progress: progress_from_rel(res_norm, beta, tolerance.tolerance),
                 });
             }
-
-            if res_norm < tolerance.tolerance {
+            if !res_norm.is_finite() || res_norm < tolerance.tolerance {
                 x += get_solution(&h, &g, &z, &(j + 1));
                 return x;
             }

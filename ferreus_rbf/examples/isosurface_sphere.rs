@@ -9,7 +9,7 @@
 /////////////////////////////////////////////////////////////////////////////////////////////
 
 use faer::{Mat, MatRef, mat};
-use ferreus_rbf::isosurfacing::{save_obj, surface_nets};
+use ferreus_rbf::isosurfacing::{BoundaryClosure, ClusterMethod, build_isosurface};
 use std::env;
 
 /// Nice float formatter for filenames: trims trailing zeros and dots.
@@ -41,27 +41,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Define some seed points on the isosurface
     let seed_points = mat![[1.0, 0.0, 0.0,], [-1.0, 0.0, 0.0],];
 
-    // Define the function values of the seed points
-    let seed_values = mat![[0.0,], [0.0],];
-
     // Define the isovalue at which to surface
     let isovalue = 0.0;
 
+    let mut surface_fn = |targets: MatRef<f64>| sphere(targets);
+
     // Extract the isosurface
-    let (verts, faces) = surface_nets(
+    let mesh = build_isosurface(
+        seed_points.as_ref(),
         &extents,
         resolution,
         isovalue,
-        &mut sphere,
-        seed_points.as_ref(),
-        seed_values.as_ref(),
-        &None,
+        &mut surface_fn,
+        None,
+        ClusterMethod::CurvatureWeighted,
+        BoundaryClosure::None,
+        None,
     );
 
     //Save the isosurface out to an obj file
     let name = format!("isosurface_sphere_{}m", fmt_num(resolution));
     let outpath = cwd.join(format!("{}.obj", &name));
-    save_obj(outpath, &name, verts.as_ref(), faces.as_ref())?;
+    mesh.save_obj(outpath, &name)?;
 
     Ok(())
 }

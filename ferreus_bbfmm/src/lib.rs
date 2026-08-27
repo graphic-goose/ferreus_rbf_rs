@@ -24,10 +24,11 @@
 //! - Optimised low-rank M2L interactions that leverage symmetries and compression
 //! - Both adaptive and non-adaptive tree structures
 //! - Multiple right-hand sides
+//! - Optional simultaneous evaluation of kernel values and gradients
 //!
 //! # Example: Fast Matrix-Vector Product
 //!
-//! ```
+//! ```no_run,standalone_crate
 //! use ferreus_bbfmm::{FmmTree, KernelFunction};
 //! use faer::{Mat, RowRef};
 //! use rand::{Rng, SeedableRng};
@@ -44,9 +45,7 @@
 //!             let diff = t - s;
 //!             dist += diff * diff;
 //!         }
-//!         dist.sqrt()
-//!        
-//!         -dist
+//!         -dist.sqrt()
 //!     }
 //! }
 //!
@@ -95,10 +94,10 @@
 //!
 //! println!("Evaluated values at source locations: {:?}", target_values);
 //! ```
-//! 
+//!
 //! # Example: Fast Matrix-Vector Product with gradients
 //!
-//! ```
+//! ```no_run,standalone_crate
 //! use ferreus_bbfmm::{FmmTree, KernelFunction};
 //! use faer::{Mat, RowRef};
 //! use rand::{Rng, SeedableRng};
@@ -115,11 +114,9 @@
 //!             let diff = t - s;
 //!             dist += diff * diff;
 //!         }
-//!         dist.sqrt()
-//!        
-//!         -dist
+//!         -dist.sqrt()
 //!     }
-//! 
+//!
 //!     #[inline(always)]
 //!     fn evaluate_value_gradient(
 //!         &self,
@@ -197,11 +194,11 @@
 //!
 //! println!("Evaluated values at source locations: {:?}", target_values);
 //! println!("Evaluated gradients at source locations: {:?}", gradients);
-//! ``` 
+//! ```
 //!
 //! # Example: RBF Evaluator
 //!
-//! ```
+//! ```no_run,standalone_crate
 //! use ferreus_bbfmm::{FmmTree, FmmParams, M2LCompressionType, KernelFunction};
 //! use faer::{Mat, RowRef};
 //! use rand::{Rng, SeedableRng};
@@ -218,9 +215,7 @@
 //!             let diff = t - s;
 //!             dist += diff * diff;
 //!         }
-//!         dist.sqrt()
-//!        
-//!         -dist
+//!         -dist.sqrt()
 //!     }
 //! }
 //!

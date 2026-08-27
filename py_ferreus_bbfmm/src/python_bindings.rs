@@ -324,7 +324,10 @@ impl FmmTree {
             };
             pyo3::exceptions::PyValueError::new_err(msg)
         })?;
-        Ok((mat_to_numpy(&target_values, py), mat_to_numpy(&gradients, py)))
+        Ok((
+            mat_to_numpy(&target_values, py),
+            mat_to_numpy(&gradients, py),
+        ))
     }
 
     #[pyo3(signature=(weights, target_points))]
@@ -386,7 +389,10 @@ impl FmmTree {
             };
             pyo3::exceptions::PyValueError::new_err(msg)
         })?;
-        Ok((mat_to_numpy(&target_values, py), mat_to_numpy(&gradients, py)))
+        Ok((
+            mat_to_numpy(&target_values, py),
+            mat_to_numpy(&gradients, py),
+        ))
     }
 
     /// Returns the source points matrix as a NumPy array.

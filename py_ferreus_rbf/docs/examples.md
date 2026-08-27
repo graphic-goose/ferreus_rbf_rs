@@ -4,10 +4,6 @@ Below is a gallery of example workflows. Click any image or title to view the fu
 
 <div class="grid cards" markdown>
 
--   [**Isosurface Sphere**](examples/isosurface_sphere.md)
-
-    [![Implicit sphere isosurface](assets/images/isosurface_sphere.png)](examples/isosurface_sphere.md)
-
 -   [**Franke's function 2D example**](examples/franke_2d.md)
 
     [![RBF-interpolated Franke surface](assets/images/franke_surface.png)](examples/franke_2d.md)
@@ -15,6 +11,10 @@ Below is a gallery of example workflows. Click any image or title to view the fu
 -   [**Isosurface linear interpolant**](examples/isosurface_linear.md)
 
     [![Isosurface linear interpolant](assets/images/isosurface_linear.png)](examples/isosurface_linear.md)
+
+-   [**Topography-clipped linear isosurface**](examples/isosurface_linear_topo.md)
+
+    [![Topography-clipped linear isosurface](assets/images/isosurface_linear_topo.png)](examples/isosurface_linear_topo.md)
 
 -   [**Isosurface trend linear interpolant**](examples/isosurface_trend_linear.md)
 
@@ -27,5 +27,13 @@ Below is a gallery of example workflows. Click any image or title to view the fu
 -   [**Isosurface spheroidal interpolant constant drift**](examples/isosurface_spheroidal_drift.md)
 
     [![Isosurface spheroidal interpolant constant drift](assets/images/isosurface_spheroidal_drift.png)](examples/isosurface_spheroidal_drift.md)
+
+-   [**Isosurface Sphere**](examples/isosurface_sphere.md)
+
+    [![Implicit sphere isosurface](assets/images/isosurface_sphere.png)](examples/isosurface_sphere.md)
+
+-   [**Boundary closure**](examples/boundary_closure.md)
+
+    [![Boundary closure](assets/images/boundary_closure.png)](examples/boundary_closure.md)    
 
 </div>

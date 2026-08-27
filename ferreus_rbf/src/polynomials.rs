@@ -115,7 +115,6 @@ pub fn evaluate_monomial_gradients(
     grads
 }
 
-
 pub fn get_lagrange_coefficients(monomials: &Mat<f64>) -> Mat<f64> {
     let (nrows, ncols) = monomials.shape();
     let rhs = Mat::<f64>::identity(nrows, ncols);

@@ -74,10 +74,11 @@ Fitting accuracy: 0.01, Tolerance type: Absolute
 Example SurfacingProgress output:
 --------------------------------
 ```
-Isovalue: 0.0  Stage: Calculating surface intersections  0.0%
-Isovalue: 0.0  Stage: Calculating surface intersections  38.9%
-Isovalue: 0.0  Stage: Calculating normals  70.0%
-Isovalue: 0.0  Stage: Building quads  80.0%
-Isovalue: 0.0  Stage: Building faces  90.0%
+Isovalue: 0.0  Stage: Projecting seeds  0.0%
+Isovalue: 0.0  Stage: Expanding wavefront  5.0%
+Isovalue: 0.0  Stage: Clustering vertices  70.0%
+Isovalue: 0.0  Stage: Building facets  82.0%
+Isovalue: 0.0  Stage: Cleaning mesh  94.0%
+Isovalue: 0.0  Stage: Boundary closure  97.0%
 Isovalue: 0.0  Stage: Finished  100.0%
 ```

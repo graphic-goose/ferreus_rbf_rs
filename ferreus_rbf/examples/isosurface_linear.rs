@@ -15,11 +15,11 @@ use ferreus_rbf::{
     interpolant_config::{
         FittingAccuracy, FittingAccuracyType, InterpolantSettings, RBFKernelType,
     },
+    isosurfacing::BoundaryClosure,
     progress::{ProgressMsg, ProgressSink, closure_sink},
-    isosurfacing::save_obj,
 };
 use ferreus_rbf_utils;
-use std::{env, sync::Arc};
+use std::{env, path::Path, sync::Arc};
 
 /// Nice float formatter for filenames: trims trailing zeros and dots.
 fn fmt_num(x: f64) -> String {
@@ -82,8 +82,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cwd = env::current_dir().unwrap();
 
     // Define the filepath for the albatite test dataset
-    let file_path = cwd
-        .join("examples")
+    let file_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root")
         .join("datasets")
         .join("albatite_SD_points.csv");
 
@@ -120,22 +121,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Define the sampling grid resolution for the surfacer
     let resolution = 5.0;
 
-    //  Define the isovalues at which to surface
-    let isovalues = vec![0.0];
+    //  Define the isovalue at which to surface
+    let isovalue = 0.0;
 
     // Generate an isosurface
-    let (all_isosurface_points, all_isosurface_faces) =
-        rbfi.build_isosurfaces(&source_point_extents, &resolution, &isovalues);
+    let mesh = rbfi.build_isosurface(
+        &source_point_extents,
+        resolution,
+        isovalue,
+        BoundaryClosure::None,
+    );
 
     //Save the isosurface out to an obj file
     let name = format!("isosurface_linear_{}m", fmt_num(resolution));
     let outpath = cwd.join("examples").join(format!("{}.obj", &name));
-    save_obj(
-        outpath,
-        &name,
-        all_isosurface_points[0].as_ref(),
-        all_isosurface_faces[0].as_ref(),
-    )?;
+    mesh.save_obj(outpath, &name)?;
 
     Ok(())
 }

@@ -21,21 +21,14 @@ enabling fast global interpolation and 3D surface extraction on large scattered
 datasets.
 
 ## Features
-
 - Supports 1D, 2D and 3D input domains
 - Scales to datasets with over 1,000,000 source points (subject to hardware)
 - Optional global trend transforms to capture large‑scale structure in the data
-- Fast 3D isosurface extraction using a surface‑following, non‑adaptive
-  Surface Nets method
-- Built on [`faer`](https://docs.rs/faer/latest/faer/) for linear algebra,
-  avoiding complex external dependencies
-
-## Limitations
-
-The current isosurface extraction method does **not** guarantee manifold or
-watertight meshes. Surfaces may contain trifurcations or self‑intersections
-and may therefore be unsuitable for downstream boolean or other topology‑
-sensitive operations without additional post‑processing.
+- Provides fast 3D isosurface extraction using a surface-following
+  regularised marching tetrahedra method via the ['ferreus_rmt'](https://docs.rs/ferreus_rmt/latest/ferreus_rmt/) crate
+- Optional simultaneous evaluation of RBF values and gradients
+- Built on [`faer`](https://docs.rs/faer/latest/faer/) for linear algebra, avoiding
+  complex build dependencies
 
 ## Getting started
 
@@ -43,7 +36,7 @@ Add the crate to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-ferreus_rbf = "0.1"
+ferreus_rbf = "0.2.2"
 ```
 
 Then construct an `RBFInterpolator` with your source points, values and

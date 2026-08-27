@@ -8,7 +8,7 @@
 //
 /////////////////////////////////////////////////////////////////////////////////////////////
 
-//! # Utilities for the [`ferreus_rbf`] crate and its Python bindings
+//! # Utilities for the [`ferreus_rbf`](https://docs.rs/ferreus_rbf/latest/ferreus_rbf/) crate and its Python bindings
 mod constants;
 mod kernel_helpers;
 mod non_rbf_kernels;
@@ -16,8 +16,9 @@ mod rbf_kernels;
 mod traits;
 mod utils;
 
-/// Implemented Kernels for use in the [`ferreus_rbf`] crate and its Python bindings,
-/// and the [`ferreus_bbfmm`] crate's Python bindings.
+/// Implemented Kernels for use in the [`ferreus_rbf`](https://docs.rs/ferreus_rbf/latest/ferreus_rbf/)
+/// crate and its Python bindings, and the [`ferreus_bbfmm`](https://docs.rs/ferreus_bbfmm/latest/ferreus_bbfmm/)
+/// crate's Python bindings.
 pub mod kernels {
     pub use super::non_rbf_kernels::*;
     pub use super::rbf_kernels::*;
