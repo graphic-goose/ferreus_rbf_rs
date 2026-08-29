@@ -70,6 +70,12 @@ pub enum FmmKernelType {
     ThinPlateSplineRbf,
     CubicRbf,
     SpheroidalRbf,
+    WendlandsC2Rbf,
+    SphericalRbf,
+    ExponentialRbf,
+    GaussianRbf,
+    Cubic2Rbf,
+    InverseMultiquadraticRbf,
     Laplacian,
     OneOverR2,
     OneOverR4,
@@ -169,6 +175,12 @@ impl KernelParams {
                     KernelType::Spheroidal3Rbf
                 }
             }
+            FmmKernelType::WendlandsC2Rbf => KernelType::WendlandsC2Rbf,
+            FmmKernelType::SphericalRbf => KernelType::SphericalRbf,
+            FmmKernelType::ExponentialRbf => KernelType::ExponentialRbf,
+            FmmKernelType::GaussianRbf => KernelType::GaussianRbf,
+            FmmKernelType::Cubic2Rbf => KernelType::Cubic2Rbf,
+            FmmKernelType::InverseMultiquadraticRbf => KernelType::InverseMultiquadraticRbf,
             FmmKernelType::Laplacian => KernelType::Laplacian,
             FmmKernelType::OneOverR2 => KernelType::OneOverR2,
             FmmKernelType::OneOverR4 => KernelType::OneOverR4,

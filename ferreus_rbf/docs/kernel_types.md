@@ -66,6 +66,69 @@ after that.
 
 More information can be found [here](https://www.seequent.com/the-spheroidal-family-of-variograms-explained/).
 
+# Wendland C2 radial basis function:
+
+<div>
+\[
+\varphi(r)=
+\begin{cases}
+(1-r)^4(4r+1), & r<1,\\
+0, & r\ge 1.
+\end{cases}
+\]
+</div>
+
+# Spherical radial basis function:
+
+<div>
+\[
+\varphi(r)=
+\begin{cases}
+1-r\,(1.5-0.5\,r^2), & r<1,\\
+0, & r\ge 1.
+\end{cases}
+\]
+</div>
+
+# Exponential radial basis function:
+
+<div>
+\[
+\varphi(r) = e^{-3r}
+\]
+</div>
+
+# Gaussian radial basis function:
+
+<div>
+\[
+\varphi(r) = e^{-3r^2}
+\]
+</div>
+
+# Cubic radial basis function (Chiles and Delfiner, 1999):
+
+<div>
+\[
+\varphi(r)=
+\begin{cases}
+1-7r^2+8.75\,r^3-3.5\,r^5+0.75\,r^7, & r<1,\\
+0, & r\ge 1.
+\end{cases}
+\]
+</div>
+
+# Inverse multiquadratic radial basis function:
+
+Kernel decay is scaled to approximately align with the other kernels via
+\(\kappa_m=6.5\).
+
+<div>
+\[
+\varphi(r) = \frac{1}{\sqrt{1+\kappa_m^2\,r^2}}
+\]
+</div>
+
 ## Parameters for each supported spheroidal order
 
 <div style="width: 100%;">

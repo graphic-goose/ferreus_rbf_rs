@@ -152,6 +152,65 @@ class RBFKernelType(Enum):
 
     """
 
+    WendlandsC2 = 4
+    r"""
+    $$
+    \varphi(r) =
+    \begin{cases}
+        (1 - r)^4 (4r + 1), & r < 1,\\
+        0, & r \ge 1
+    \end{cases}
+    $$
+    """
+
+    Spherical = 5
+    r"""
+    $$
+    \varphi(r) =
+    \begin{cases}
+        1 - r\,(1.5 - 0.5\,r^2), & r < 1,\\
+        0, & r \ge 1
+    \end{cases}
+    $$
+    """
+
+    Exponential = 6
+    r"""
+    $$
+    \varphi(r) = e^{-3r}
+    $$
+    """
+
+    Gaussian = 7
+    r"""
+    $$
+    \varphi(r) = e^{-3r^2}
+    $$
+    """
+
+    Cubic2 = 8
+    r"""
+    Cubic RBF kernel as defined by Chiles, Delfiner (1999).
+
+    $$
+    \varphi(r) =
+    \begin{cases}
+        1 - 7r^2 + 8.75\,r^3 - 3.5\,r^5 + 0.75\,r^7, & r < 1,\\
+        0, & r \ge 1
+    \end{cases}
+    $$
+    """
+
+    InverseMultiquadratic = 9
+    r"""
+    Inverse Multiquadratic RBF kernel. Kernel decay is scaled to
+    approximately align with the other kernels via $\kappa_m = 6.5$.
+
+    $$
+    \varphi(r) = \frac{1}{\sqrt{1 + \kappa_m^2\,r^2}}
+    $$
+    """
+
 class SpheroidalOrder(Enum):
     """The implemented orders (alpha) for the spheroidal kernel.
     """

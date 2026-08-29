@@ -72,8 +72,15 @@ where
         // Choose pivot column j with largest absolute residual in row i
         j = argmax_masked(&v_column_i.row(0), &unused_columns);
 
+        // Handle near-zero pivot (can happen with compactly supported kernels
+        // like Spherical, WendlandsC2 when cells are outside support radius)
+        let pivot_value = v_column_i.row(0)[j];
+        if pivot_value.abs() < f64::EPSILON {
+            break;
+        }
+
         // Normalize v_k so v_k[j] = 1
-        let pivot = 1.0 / v_column_i.row(0)[j];
+        let pivot = 1.0 / pivot_value;
 
         v_column_i *= pivot;
 
@@ -171,6 +178,11 @@ fn argmax_masked(data: &RowRef<f64>, mask: &[u8]) -> usize {
 /// # Returns
 /// Recompressed low-rank factorization `(U, V)` such that A ≈ U * V^T
 pub fn recompress_aca(u_aca: &Mat<f64>, v_aca: &Mat<f64>, epsilon: &f64) -> (Mat<f64>, Mat<f64>) {
+    // Handle rank-0 case (empty factors from compactly supported kernels)
+    if u_aca.ncols() == 0 {
+        return (Mat::<f64>::zeros(u_aca.nrows(), 0), Mat::<f64>::zeros(0, v_aca.nrows()));
+    }
+
     // QR decomposition of ACA factors
     let u_qr = u_aca.qr();
     let qu = u_qr.compute_thin_Q(); // m × k orthonormal basis

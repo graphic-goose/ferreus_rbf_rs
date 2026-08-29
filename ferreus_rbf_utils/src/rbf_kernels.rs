@@ -315,3 +315,181 @@ pub type Spheroidal5RbfKernel = SpheroidalRbfKernel<Order5>;
 pub type Spheroidal7RbfKernel = SpheroidalRbfKernel<Order7>;
 /// Order-9 spheroidal RBF kernel type alias.
 pub type Spheroidal9RbfKernel = SpheroidalRbfKernel<Order9>;
+
+/// WendlandsC2 RBF kernel.
+#[derive(Clone, Debug, Copy)]
+pub struct WendlandsC2RbfKernel;
+
+impl WendlandsC2RbfKernel {
+    #[inline(always)]
+    pub fn phi(&self, r: f64) -> f64 {
+        match r < 1.0 {
+            true => {
+                let v = 1.0 - r;
+                (v * v * v * v) * (4.0 * r + 1.0)
+            }
+            false => 0.0,
+        }
+    }
+}
+
+impl KernelFunction for WendlandsC2RbfKernel {
+    #[inline(always)]
+    fn evaluate(&self, target: RowRef<f64>, source: RowRef<f64>) -> f64 {
+        let r = crate::get_distance(target, source);
+        self.phi(r)
+    }
+}
+
+impl KernelFromParams for WendlandsC2RbfKernel {
+    #[inline(always)]
+    fn from_params(_: &KernelParams) -> Self {
+        WendlandsC2RbfKernel
+    }
+}
+
+/// Spherical RBF kernel.
+#[derive(Clone, Debug, Copy)]
+pub struct SphericalRbfKernel;
+
+impl SphericalRbfKernel {
+    #[inline(always)]
+    pub fn phi(&self, r: f64) -> f64 {
+        match r < 1.0 {
+            true => 1.0 - r * (1.5 - 0.5 * r * r),
+            false => 0.0,
+        }
+    }
+}
+
+impl KernelFunction for SphericalRbfKernel {
+    #[inline(always)]
+    fn evaluate(&self, target: RowRef<f64>, source: RowRef<f64>) -> f64 {
+        let r = crate::get_distance(target, source);
+        self.phi(r)
+    }
+}
+
+impl KernelFromParams for SphericalRbfKernel {
+    #[inline(always)]
+    fn from_params(_: &KernelParams) -> Self {
+        SphericalRbfKernel
+    }
+}
+
+/// Exponential RBF kernel.
+#[derive(Clone, Debug, Copy)]
+pub struct ExponentialRbfKernel;
+
+impl ExponentialRbfKernel {
+    #[inline(always)]
+    pub fn phi(&self, r: f64) -> f64 {
+        (-3.0 * r).exp()
+    }
+}
+
+impl KernelFunction for ExponentialRbfKernel {
+    #[inline(always)]
+    fn evaluate(&self, target: RowRef<f64>, source: RowRef<f64>) -> f64 {
+        let r = crate::get_distance(target, source);
+        self.phi(r)
+    }
+}
+
+impl KernelFromParams for ExponentialRbfKernel {
+    #[inline(always)]
+    fn from_params(_: &KernelParams) -> Self {
+        ExponentialRbfKernel
+    }
+}
+
+/// Gaussian RBF kernel.
+#[derive(Clone, Debug, Copy)]
+pub struct GaussianRbfKernel;
+
+impl GaussianRbfKernel {
+    #[inline(always)]
+    pub fn phi(&self, r: f64) -> f64 {
+        (-3.0 * r * r).exp()
+    }
+}
+
+impl KernelFunction for GaussianRbfKernel {
+    #[inline(always)]
+    fn evaluate(&self, target: RowRef<f64>, source: RowRef<f64>) -> f64 {
+        let r = crate::get_distance(target, source);
+        self.phi(r)
+    }
+}
+
+impl KernelFromParams for GaussianRbfKernel {
+    #[inline(always)]
+    fn from_params(_: &KernelParams) -> Self {
+        GaussianRbfKernel
+    }
+}
+
+/// Cubic RBF kernel as defined by Chiles, Delfiner (1999).
+#[derive(Clone, Debug, Copy)]
+pub struct Cubic2RbfKernel;
+
+impl Cubic2RbfKernel {
+    #[inline(always)]
+    pub fn phi(&self, r: f64) -> f64 {
+        match r < 1.0 {
+            true => {
+                let d2 = r * r;
+                let d3 = d2 * r;
+                let d5 = d3 * d2;
+                let d7 = d5 * d2;
+                1.0 - 7.0 * d2 + 8.75 * d3 - 3.5 * d5 + 0.75 * d7
+            }
+            false => 0.0,
+        }
+    }
+}
+
+impl KernelFunction for Cubic2RbfKernel {
+    #[inline(always)]
+    fn evaluate(&self, target: RowRef<f64>, source: RowRef<f64>) -> f64 {
+        let r = crate::get_distance(target, source);
+        self.phi(r)
+    }
+}
+
+impl KernelFromParams for Cubic2RbfKernel {
+    #[inline(always)]
+    fn from_params(_: &KernelParams) -> Self {
+        Cubic2RbfKernel
+    }
+}
+
+/// Inverse Multiquadratic RBF kernel.
+///
+/// Kernel decay is scaled to ~align with other kernels.
+#[derive(Clone, Debug, Copy)]
+pub struct InverseMultiquadraticRbfKernel;
+
+impl InverseMultiquadraticRbfKernel {
+    const KM_SQ: f64 = 42.25;  // 6.5 ^ 2
+
+    #[inline(always)]
+    pub fn phi(&self, r: f64) -> f64 {
+        1.0 / (1.0 + r * r * Self::KM_SQ).sqrt()
+    }
+}
+
+impl KernelFunction for InverseMultiquadraticRbfKernel {
+    #[inline(always)]
+    fn evaluate(&self, target: RowRef<f64>, source: RowRef<f64>) -> f64 {
+        let r = crate::get_distance(target, source);
+        self.phi(r)
+    }
+}
+
+impl KernelFromParams for InverseMultiquadraticRbfKernel {
+    #[inline(always)]
+    fn from_params(_: &KernelParams) -> Self {
+        InverseMultiquadraticRbfKernel
+    }
+}

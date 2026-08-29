@@ -403,6 +403,12 @@ pub enum RBFKernelType {
     ThinPlateSpline,
     Cubic,
     Spheroidal,
+    WendlandsC2,
+    Spherical,
+    Exponential,
+    Gaussian,
+    Cubic2,
+    InverseMultiquadratic,
 }
 
 impl From<RBFKernelType> for interpolant_config::RBFKernelType {
@@ -412,6 +418,12 @@ impl From<RBFKernelType> for interpolant_config::RBFKernelType {
             RBFKernelType::ThinPlateSpline => interpolant_config::RBFKernelType::ThinPlateSpline,
             RBFKernelType::Cubic => interpolant_config::RBFKernelType::Cubic,
             RBFKernelType::Spheroidal => interpolant_config::RBFKernelType::Spheroidal,
+            RBFKernelType::WendlandsC2 => interpolant_config::RBFKernelType::WendlandsC2,
+            RBFKernelType::Spherical => interpolant_config::RBFKernelType::Spherical,
+            RBFKernelType::Exponential => interpolant_config::RBFKernelType::Exponential,
+            RBFKernelType::Gaussian => interpolant_config::RBFKernelType::Gaussian,
+            RBFKernelType::Cubic2 => interpolant_config::RBFKernelType::Cubic2,
+            RBFKernelType::InverseMultiquadratic => interpolant_config::RBFKernelType::InverseMultiquadratic,
         }
     }
 }

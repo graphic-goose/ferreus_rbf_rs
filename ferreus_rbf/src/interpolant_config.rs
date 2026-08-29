@@ -35,10 +35,16 @@ pub enum Drift {
 #[doc = include_str!("../docs/kernel_types.md")]
 #[derive(Clone, Debug, Copy, Serialize, Deserialize, PartialEq)]
 pub enum RBFKernelType {
-    Linear,
-    ThinPlateSpline,
-    Cubic,
-    Spheroidal,
+    Linear,  // 0
+    ThinPlateSpline,  // 1
+    Cubic,  // 2
+    Spheroidal,  // 3
+    WendlandsC2,  // 4
+    Spherical,  // 5
+    Exponential,  // 6
+    Gaussian,  // 7
+    Cubic2,  // 8
+    InverseMultiquadratic  // 9
 }
 
 /// Returns the minimum required [`Drift`] for the provided [`RBFKernelType`]
@@ -48,6 +54,7 @@ pub fn get_min_drift(kernel: RBFKernelType) -> Drift {
         RBFKernelType::ThinPlateSpline => Drift::Linear,
         RBFKernelType::Cubic => Drift::Linear,
         RBFKernelType::Spheroidal => Drift::None,
+        _ => Drift::None
     }
 }
 
@@ -241,6 +248,7 @@ impl InterpolantSettings {
             RBFKernelType::ThinPlateSpline => 1,
             RBFKernelType::Cubic => 1,
             RBFKernelType::Spheroidal => -1,
+            _ => -1
         };
 
         match poly_degree >= min_degree {
@@ -283,6 +291,12 @@ impl From<InterpolantSettings> for KernelParams {
                         SpheroidalOrder::Seven => KernelType::Spheroidal7Rbf,
                         SpheroidalOrder::Nine => KernelType::Spheroidal9Rbf,
                     },
+                    RBFKernelType::WendlandsC2 => KernelType::WendlandsC2Rbf,
+                    RBFKernelType::Spherical => KernelType::SphericalRbf,
+                    RBFKernelType::Exponential => KernelType::ExponentialRbf,
+                    RBFKernelType::Gaussian => KernelType::GaussianRbf,
+                    RBFKernelType::Cubic2 => KernelType::Cubic2Rbf,
+                    RBFKernelType::InverseMultiquadratic => KernelType::InverseMultiquadraticRbf
                 }
             },
             base_range: v.base_range,
