@@ -46,13 +46,13 @@ pub fn fgmres<A, M>(
     callback: Option<Arc<dyn ProgressSink>>,
 ) -> Mat<f64>
 where
-    A: Fn(&MatRef<f64>) -> Mat<f64>,
-    M: Fn(&MatRef<f64>) -> Mat<f64>,
+    A: Fn(MatRef<f64>) -> Mat<f64>,
+    M: Fn(MatRef<f64>) -> Mat<f64>,
 {
     let n = b.nrows();
     let mut x = x0.cloned().unwrap_or_else(|| Mat::zeros(n, 1));
 
-    let mut r = b - &a(&x.as_ref());
+    let mut r = b - &a(x.as_ref());
     let beta = match tolerance.tolerance_type {
         FittingAccuracyType::Absolute => r.col(0).norm_max(),
         FittingAccuracyType::Relative => r.col(0).norm_l2(),
@@ -88,13 +88,13 @@ where
             // Apply preconditioner
             let vj = v.col(j);
             let w = match m {
-                Some(mfun) => mfun(&vj.as_mat_ref().as_col_shape(1)),
+                Some(mfun) => mfun(vj.as_mat_ref().as_col_shape(1)),
                 None => vj.as_mat_ref().as_col_shape(1).to_owned(),
             };
             z.col_mut(j).copy_from(&w.col(0));
 
             // Apply matvec operator
-            let mut wj = a(&w.as_ref());
+            let mut wj = a(w.as_ref());
 
             // Modified Gram-Schmidt orthogonalization
             for i in 0..=j {
@@ -160,7 +160,7 @@ where
 
         // Restart update
         x += get_solution(&h, &g, &z, &max_inner_iterations);
-        r = b - &a(&x.as_ref());
+        r = b - &a(x.as_ref());
 
         let res_norm = match tolerance.tolerance_type {
             FittingAccuracyType::Absolute => r.norm_max(),
@@ -243,8 +243,8 @@ pub fn schwarz_ddm_solver<A, M>(
     callback: Option<Arc<dyn ProgressSink>>,
 ) -> Mat<f64>
 where
-    A: Fn(&MatRef<f64>) -> Mat<f64>,
-    M: Fn(&MatRef<f64>) -> Mat<f64>,
+    A: Fn(MatRef<f64>) -> Mat<f64>,
+    M: Fn(MatRef<f64>) -> Mat<f64>,
 {
     let mut rg = rhs.clone().to_owned();
 
@@ -261,8 +261,8 @@ where
 
     if let Some(precon) = m.as_mut() {
         while res_norm > tolerance.tolerance && iteration < max_interations {
-            sg += precon(&rg.col(0).as_mat_ref().as_col_shape(1));
-            rg = rhs - matvec(&sg.as_ref());
+            sg += precon(rg.col(0).as_mat_ref().as_col_shape(1));
+            rg = rhs - matvec(sg.as_ref());
             res_norm = match tolerance.tolerance_type {
                 FittingAccuracyType::Absolute => rg.norm_max(),
                 FittingAccuracyType::Relative => rg.norm_l2() / beta,

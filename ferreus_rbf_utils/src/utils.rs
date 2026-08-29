@@ -13,6 +13,7 @@ use faer::{Mat, MatRef, RowRef};
 use ferreus_bbfmm::{FmmParams, FmmTree as TypedFmmTree, KernelFunction};
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
+use std::sync::Arc;
 
 /// Returns an owned `Mat<T>` from a subset of row indices.
 ///
@@ -390,7 +391,7 @@ macro_rules! for_each_kernel {
             #[allow(clippy::too_many_arguments)]
             #[inline]
             pub fn new(
-                source_points: Mat<f64>,
+                source_points: Arc<Mat<f64>>,
                 interpolation_order: usize,
                 kernel_params: KernelParams,
                 adaptive_tree: bool,
@@ -422,7 +423,7 @@ macro_rules! for_each_kernel {
 
             /// Sets the source weights for the underlying FMM tree.
             #[inline]
-            pub fn set_weights(&mut self, w: &faer::MatRef<'_, f64>) {
+            pub fn set_weights(&mut self, w: faer::MatRef<'_, f64>) {
                 match self {
                     $( Self::$V(t) => t.set_weights(w), )*
                 }
@@ -430,7 +431,7 @@ macro_rules! for_each_kernel {
 
             /// Sets local expansion coefficients for the underlying FMM tree.
             #[inline]
-            pub fn set_local_coefficients(&mut self, w: &faer::MatRef<'_, f64>) {
+            pub fn set_local_coefficients(&mut self, w: faer::MatRef<'_, f64>) {
                 match self {
                     $( Self::$V(t) => t.set_local_coefficients(w), )*
                 }
@@ -440,8 +441,8 @@ macro_rules! for_each_kernel {
             #[inline]
             pub fn evaluate(
                 &mut self,
-                w: &faer::MatRef<'_, f64>,
-                x: &faer::Mat<f64>,
+                w: faer::MatRef<'_, f64>,
+                x: faer::MatRef<f64>,
             ) -> Result<Mat<f64>, ferreus_bbfmm::FmmError> {
                 match self {
                     $( Self::$V(t) => t.evaluate(w, x), )*
@@ -452,8 +453,8 @@ macro_rules! for_each_kernel {
             #[inline]
             pub fn evaluate_with_gradients(
                 &mut self,
-                w: &faer::MatRef<'_, f64>,
-                x: &faer::Mat<f64>,
+                w: faer::MatRef<'_, f64>,
+                x: faer::MatRef<f64>,
             ) -> Result<(Mat<f64>, Mat<f64>), ferreus_bbfmm::FmmError> {
                 match self {
                     $( Self::$V(t) => t.evaluate_with_gradients(w, x), )*
@@ -464,8 +465,8 @@ macro_rules! for_each_kernel {
             #[inline]
             pub fn evaluate_leaves(
                 &mut self,
-                w: &faer::MatRef<'_, f64>,
-                x: &faer::Mat<f64>,
+                w: faer::MatRef<'_, f64>,
+                x: faer::MatRef<f64>,
             ) -> Result<Mat<f64>, ferreus_bbfmm::FmmError> {
                 match self {
                     $( Self::$V(t) => t.evaluate_leaves(w, x), )*
@@ -476,8 +477,8 @@ macro_rules! for_each_kernel {
             #[inline]
             pub fn evaluate_leaves_with_gradients(
                 &mut self,
-                w: &faer::MatRef<'_, f64>,
-                x: &faer::Mat<f64>,
+                w: faer::MatRef<'_, f64>,
+                x: faer::MatRef<f64>,
             ) -> Result<(Mat<f64>, Mat<f64>), ferreus_bbfmm::FmmError> {
                 match self {
                     $( Self::$V(t) => t.evaluate_leaves_with_gradients(w, x), )*

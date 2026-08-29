@@ -14,6 +14,7 @@ use faer::{Mat, MatRef};
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::fmt::{self, Debug};
+use std::sync::Arc;
 
 /// Errors that can occur during FMM tree operations.
 #[derive(Debug)]
@@ -194,9 +195,9 @@ pub struct PrecomputeOperators {
 pub struct FmmTree<K: KernelFunction> {
     /// Source point locations used to build the tree.
     ///
-    /// Expected to be a [`faer::Mat<f64>`](https://docs.rs/faer/latest/faer/mat/type.Mat.html)
+    /// Expected to be an Arc wrapped [`faer::Mat<f64>`](https://docs.rs/faer/latest/faer/mat/type.Mat.html)
     /// with shape (N, D), where N is the number of points and D is the dimensionality.
-    pub source_points: Mat<f64>,
+    pub source_points: Arc<Mat<f64>>,
 
     /// Number of Chebyshev interpolation nodes per dimension.
     interpolation_order: usize,
@@ -258,7 +259,7 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
     /// Constructs a new [`FmmTree`] from the given source points and parameters.
     ///
     /// # Arguments
-    /// * `source_points`: Input matrix of shape (N, D), where N is the number of points, D is the dimensionality.
+    /// * `source_points`: Arc wrapped input matrix of shape (N, D), where N is the number of points, D is the dimensionality.
     /// * `interpolation_order`: Number of Chebyshev nodes per dimension.
     /// * `kernel_function`: Kernel function used for evaluating interactions.
     ///    Must implement [`KernelFunction`]
@@ -270,7 +271,7 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
     /// # Returns
     /// * A fully initialised [`FmmTree`] with all data structures allocated and tree built.
     pub fn new(
-        source_points: Mat<f64>,
+        source_points: Arc<Mat<f64>>,
         interpolation_order: usize,
         kernel: K,
         adaptive_tree: bool,
@@ -380,7 +381,7 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
     /// # Arguments
     /// * `weights`: Matrix of shape (N, K), where N is the number of source points and K is the number of right-hand sides
     ///              to evaluate, containing source point weights (values)
-    pub fn set_weights(&mut self, weights: &MatRef<f64>) {
+    pub fn set_weights(&mut self, weights: MatRef<f64>) {
         self.nrhs = weights.ncols();
         self.reset_multipole_coefficients();
 
@@ -410,8 +411,8 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
     /// * `target points`: Matrix of shape (N, D), where N is the number of target points and D is the dimensionality.
     pub fn evaluate(
         &mut self,
-        weights: &MatRef<f64>,
-        target_points: &Mat<f64>,
+        weights: MatRef<f64>,
+        target_points: MatRef<f64>,
     ) -> Result<Mat<f64>, FmmError> {
         let (target_values, _) = self._eval::<false>(weights, target_points)?;
         Ok(target_values)
@@ -433,8 +434,8 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
     ///     Gradient columns are laid out as `[rhs0_dx, rhs0_dy, rhs0_dz, rhs1_dx, ...]`, truncated to the tree dimensionality.    
     pub fn evaluate_with_gradients(
         &mut self,
-        weights: &MatRef<f64>,
-        target_points: &Mat<f64>,
+        weights: MatRef<f64>,
+        target_points: MatRef<f64>,
     ) -> Result<(Mat<f64>, Mat<f64>), FmmError> {
         let (target_values, gradients) = self._eval::<true>(weights, target_points)?;
         Ok((target_values, gradients.unwrap()))
@@ -443,8 +444,8 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
     /// Internal helper function for evaluating with or without gradients.
     fn _eval<const WITH_GRADS: bool>(
         &mut self,
-        weights: &MatRef<f64>,
-        target_points: &Mat<f64>,
+        weights: MatRef<f64>,
+        target_points: MatRef<f64>,
     ) -> Result<(Mat<f64>, Option<Mat<f64>>), FmmError> {
         self.reset_local_coefficients();
 
@@ -485,8 +486,8 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
                 let gradients =
                     Mat::<f64>::zeros(ntarget_points, self.nrhs * (self.dimensions as usize));
                 self.leaf_pass(
-                    &weights,
-                    &target_points,
+                    weights,
+                    target_points,
                     WITH_GRADS,
                     target_values.as_ref(),
                     Some(gradients.as_ref()),
@@ -495,8 +496,8 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
             }
             false => {
                 self.leaf_pass(
-                    &weights,
-                    &target_points,
+                    weights,
+                    target_points,
                     WITH_GRADS,
                     target_values.as_ref(),
                     None,
@@ -515,7 +516,7 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
     ///
     /// # Returns
     /// * `target_values` : Matrix of shape (M, K), where M is the number of target points and K is the number of right-hand sides evaluated.
-    pub fn set_local_coefficients(&mut self, weights: &MatRef<f64>) {
+    pub fn set_local_coefficients(&mut self, weights: MatRef<f64>) {
         self.reset_local_coefficients();
 
         let full_tree_set: HashSet<u64> = self.tree_lists.tree.iter().cloned().collect();
@@ -536,8 +537,8 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
     /// * `target_values` : Matrix of shape (M, K), where M is the number of target points and K is the number of right-hand sides evaluated.
     pub fn evaluate_leaves(
         &mut self,
-        weights: &MatRef<f64>,
-        target_points: &Mat<f64>,
+        weights: MatRef<f64>,
+        target_points: MatRef<f64>,
     ) -> Result<Mat<f64>, FmmError> {
         let (target_values, _) = self._eval_leaves::<false>(weights, target_points)?;
         Ok(target_values)
@@ -559,8 +560,8 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
     ///     Gradient columns are laid out as `[rhs0_dx, rhs0_dy, rhs0_dz, rhs1_dx, ...]`, truncated to the tree dimensionality.   
     pub fn evaluate_leaves_with_gradients(
         &mut self,
-        weights: &MatRef<f64>,
-        target_points: &Mat<f64>,
+        weights: MatRef<f64>,
+        target_points: MatRef<f64>,
     ) -> Result<(Mat<f64>, Mat<f64>), FmmError> {
         let (target_values, gradients) = self._eval_leaves::<true>(weights, target_points)?;
         Ok((target_values, gradients.unwrap()))
@@ -569,8 +570,8 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
     /// Internal helper function for evaluating leaf cells with or without gradients.
     fn _eval_leaves<const WITH_GRADS: bool>(
         &mut self,
-        weights: &MatRef<f64>,
-        target_points: &Mat<f64>,
+        weights: MatRef<f64>,
+        target_points: MatRef<f64>,
     ) -> Result<(Mat<f64>, Option<Mat<f64>>), FmmError> {
         let ntarget_points = target_points.shape().0;
 
@@ -594,8 +595,8 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
                 let gradients =
                     Mat::<f64>::zeros(ntarget_points, self.nrhs * (self.dimensions as usize));
                 self.leaf_pass(
-                    &weights,
-                    &target_points,
+                    weights,
+                    target_points,
                     WITH_GRADS,
                     target_values.as_ref(),
                     Some(gradients.as_ref()),
@@ -604,8 +605,8 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
             }
             false => {
                 self.leaf_pass(
-                    &weights,
-                    &target_points,
+                    weights,
+                    target_points,
                     WITH_GRADS,
                     target_values.as_ref(),
                     None,
@@ -633,7 +634,7 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
 
     fn check_kernel_supports_gradients(
         &self,
-        target_points: &Mat<f64>,
+        target_points: MatRef<f64>,
         evaluate_gradients: bool,
     ) -> Result<(), FmmError> {
         if evaluate_gradients == false {
@@ -699,7 +700,7 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
 
         if let Some(cell_source_indices) = self.tree_lists.leaf_source_indices.get(&key) {
             let mut cell_point_locations =
-                utils::select_mat_rows(self.source_points.as_ref(), &cell_source_indices);
+                utils::select_mat_rows(self.source_points.as_mat_ref(), &cell_source_indices);
 
             let cell_source_values = Mat::<f64>::from_fn(
                 cell_source_indices.len(),
@@ -1088,8 +1089,8 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
     /// Parallel loop through all leaf cells to evaluate targets.
     fn leaf_pass(
         &self,
-        source_values: &MatRef<f64>,
-        target_points: &Mat<f64>,
+        source_values: MatRef<f64>,
+        target_points: MatRef<f64>,
         evaluate_gradients: bool,
         target_values_ref: MatRef<f64>,
         target_gradients_ref: Option<MatRef<f64>>,
@@ -1112,8 +1113,8 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
 
     fn leaf_pass_mode<const WITH_GRADS: bool>(
         &self,
-        source_values: &MatRef<f64>,
-        target_points: &Mat<f64>,
+        source_values: MatRef<f64>,
+        target_points: MatRef<f64>,
         target_values_ref: MatRef<f64>,
         target_gradients_ref: Option<MatRef<f64>>,
     ) {
@@ -1162,11 +1163,11 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
     fn particle_to_particle<const WITH_GRADS: bool>(
         &self,
         u_list: &HashSet<u64>,
-        target_points: &Mat<f64>,
+        target_points: MatRef<f64>,
         cell_target_indices: &[usize],
         target_values_ref: MatRef<f64>,
         target_gradients_ref: Option<MatRef<f64>>,
-        source_values: &MatRef<f64>,
+        source_values: MatRef<f64>,
     ) {
         let dims = target_points.ncols();
 
@@ -1179,7 +1180,7 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
                 );
 
                 let u_cell_points =
-                    utils::select_mat_rows(self.source_points.as_ref(), u_cell_source_indices);
+                    utils::select_mat_rows(self.source_points.as_mat_ref(), u_cell_source_indices);
 
                 for rhs in 0..self.nrhs {
                     let rhs_vals = u_cell_values.col(rhs);
@@ -1254,7 +1255,7 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
     fn multipole_to_particle<const WITH_GRADS: bool>(
         &self,
         w_list: &HashSet<u64>,
-        target_points: &Mat<f64>,
+        target_points: MatRef<f64>,
         cell_target_indices: &[usize],
         target_values_ref: MatRef<f64>,
         target_gradients_ref: Option<MatRef<f64>>,
@@ -1359,7 +1360,7 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
         &self,
         leaf: &u64,
         leaf_target_indices: &[usize],
-        target_points: &Mat<f64>,
+        target_points: MatRef<f64>,
         target_values_ref: MatRef<f64>,
         target_gradients_ref: Option<MatRef<f64>>,
     ) {
@@ -1444,6 +1445,7 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
 mod tests {
     use super::{FmmError, FmmTree, KernelFunction};
     use faer::{RowRef, mat};
+    use std::sync::Arc;
 
     struct TestKernel;
 
@@ -1464,7 +1466,7 @@ mod tests {
     #[test]
     fn evaluate_returns_error_for_target_outside_extents() {
         // Single 1D source point inside [0.0, 1.0].
-        let source_points = mat![[0.5]];
+        let source_points = Arc::new(mat![[0.5]]);
         let interpolation_order = 3usize;
         let kernel = TestKernel;
         let adaptive_tree = true;
@@ -1473,7 +1475,7 @@ mod tests {
         let extents = Some(vec![0.0_f64, 1.0_f64]);
 
         let mut tree = FmmTree::new(
-            source_points.clone(),
+            source_points,
             interpolation_order,
             kernel,
             adaptive_tree,
@@ -1484,12 +1486,12 @@ mod tests {
 
         // Single RHS weight.
         let weights = mat![[1.0]];
-        tree.set_weights(&weights.as_ref());
+        tree.set_weights(weights.as_ref());
 
         // Two targets: one inside extents, one clearly outside.
         let target_points = mat![[0.5], [10.0]];
 
-        let result = tree.evaluate(&weights.as_ref(), &target_points);
+        let result = tree.evaluate(weights.as_ref(), target_points.as_ref());
 
         match result {
             Err(FmmError::PointOutsideTree { point_index }) => {

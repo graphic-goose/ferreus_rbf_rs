@@ -30,14 +30,14 @@ use faer::{Mat, MatMut, MatRef};
 use rayon::iter::{IntoParallelRefMutIterator, ParallelIterator};
 
 pub fn schwarz_preconditioner<F>(
-    rg: &MatRef<f64>,
+    rg: MatRef<f64>,
     ddm_tree: &mut DDMTree,
     matvec: &F,
     interpolant_settings: &InterpolantSettings,
     ortho_poly_matrix: &Option<Mat<f64>>,
 ) -> Mat<f64>
 where
-    F: Fn(&MatRef<f64>, Option<&Vec<usize>>) -> Mat<f64> + Sync,
+    F: Fn(MatRef<f64>, Option<&Vec<usize>>) -> Mat<f64> + Sync,
 {
     let mut sl = Mat::<f64>::zeros(rg.nrows(), rg.ncols());
 
@@ -51,7 +51,7 @@ where
             let level_point_indices = &ddm_tree.levels[i].point_indices;
 
             sl += solve_fine_level(
-                rg - matvec(&sl.as_ref(), Some(level_point_indices)),
+                rg - matvec(sl.as_ref(), Some(level_point_indices)),
                 ddm_tree,
                 &i,
                 &interpolant_settings,
@@ -61,7 +61,7 @@ where
             // Use the coarse level as a smoother, but only return the poly 'tail'
             // coefficients if this iteration is the coarsest of the fine levels.
             sl += solve_coarse_level(
-                rg - matvec(&sl.as_ref(), Some(&coarse_level_indices)),
+                rg - matvec(sl.as_ref(), Some(&coarse_level_indices)),
                 ddm_tree,
                 i == coarse_idx - 1,
             );
@@ -69,7 +69,7 @@ where
     } else {
         // Just a single coarse domain, so solve directly.
         sl += solve_coarse_level(
-            rg - matvec(&sl.as_ref(), Some(&coarse_level_indices)),
+            rg - matvec(sl.as_ref(), Some(&coarse_level_indices)),
             ddm_tree,
             true,
         );

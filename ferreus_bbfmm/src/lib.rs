@@ -30,9 +30,10 @@
 //!
 //! ```no_run,standalone_crate
 //! use ferreus_bbfmm::{FmmTree, KernelFunction};
-//! use faer::{Mat, RowRef};
+//! use faer::{Mat, mat::AsMatRef, RowRef};
 //! use rand::{Rng, SeedableRng};
 //! use rand::rngs::StdRng;
+//! use std::sync::Arc;
 //!
 //! // Define a kernel that implements the KernelFunction trait
 //! pub struct LinearRbfKernel;
@@ -57,7 +58,7 @@
 //! let mut rng = StdRng::seed_from_u64(42);
 //! let num_rhs = 2;
 //!
-//! let source_points = Mat::from_fn(num_points, dim, |_, _| rng.random_range(-1.0..1.0));
+//! let source_points = Arc::new(Mat::from_fn(num_points, dim, |_, _| rng.random_range(-1.0..1.0)));
 //! let weights = Mat::from_fn(num_points, num_rhs, |_, _| rng.random_range(0.0..1.0));
 //!
 //! // Interpolation order defines the number of Chebyshev nodes in each dimension
@@ -84,13 +85,11 @@
 //!
 //! // Set the weights - this performs an upward pass through the tree
 //! // and sets the multipole coefficients
-//! tree.set_weights(&weights.as_ref());
+//! tree.set_weights(weights.as_ref());
 //!
 //! // Evaluate at the source points
-//! let target_points = source_points.clone();
-//!
 //! // Perform a downward pass to set the local coefficients, then perform a leaf evaluation
-//! let target_values = tree.evaluate(&weights.as_ref(), &target_points).unwrap();
+//! let target_values = tree.evaluate(weights.as_ref(), source_points.as_mat_ref()).unwrap();
 //!
 //! println!("Evaluated values at source locations: {:?}", target_values);
 //! ```
@@ -99,9 +98,10 @@
 //!
 //! ```no_run,standalone_crate
 //! use ferreus_bbfmm::{FmmTree, KernelFunction};
-//! use faer::{Mat, RowRef};
+//! use faer::{Mat, mat::AsMatRef, RowRef};
 //! use rand::{Rng, SeedableRng};
 //! use rand::rngs::StdRng;
+//! use std::sync::Arc;
 //!
 //! // Define a kernel that implements the KernelFunction trait
 //! pub struct LinearRbfKernel;
@@ -156,7 +156,7 @@
 //! let mut rng = StdRng::seed_from_u64(42);
 //! let num_rhs = 2;
 //!
-//! let source_points = Mat::from_fn(num_points, dim, |_, _| rng.random_range(-1.0..1.0));
+//! let source_points = Arc::new(Mat::from_fn(num_points, dim, |_, _| rng.random_range(-1.0..1.0)));
 //! let weights = Mat::from_fn(num_points, num_rhs, |_, _| rng.random_range(0.0..1.0));
 //!
 //! // Interpolation order defines the number of Chebyshev nodes in each dimension
@@ -183,14 +183,12 @@
 //!
 //! // Set the weights - this performs an upward pass through the tree
 //! // and sets the multipole coefficients
-//! tree.set_weights(&weights.as_ref());
+//! tree.set_weights(weights.as_ref());
 //!
 //! // Evaluate at the source points
-//! let target_points = source_points.clone();
-//!
 //! // Perform a downward pass to set the local coefficients, then perform a leaf evaluation
 //! // to evaluate the values and gradients at the target locations.
-//! let (target_values, gradients) = tree.evaluate_with_gradients(&weights.as_ref(), &target_points).unwrap();
+//! let (target_values, gradients) = tree.evaluate_with_gradients(weights.as_ref(), source_points.as_mat_ref()).unwrap();
 //!
 //! println!("Evaluated values at source locations: {:?}", target_values);
 //! println!("Evaluated gradients at source locations: {:?}", gradients);
@@ -203,6 +201,7 @@
 //! use faer::{Mat, RowRef};
 //! use rand::{Rng, SeedableRng};
 //! use rand::rngs::StdRng;
+//! use std::sync::Arc;
 //!
 //! // Define a kernel that implements the KernelFunction trait
 //! pub struct LinearRbfKernel;
@@ -227,7 +226,7 @@
 //! let mut rng = StdRng::seed_from_u64(42);
 //! let num_rhs = 1;
 //!
-//! let source_points = Mat::from_fn(num_points, dim, |_, _| rng.random_range(-1.0..1.0));
+//! let source_points = Arc::new(Mat::from_fn(num_points, dim, |_, _| rng.random_range(-1.0..1.0)));
 //! let weights = Mat::from_fn(num_points, num_rhs, |_, _| rng.random_range(0.0..1.0));
 //!
 //! let interpolation_order = 7;
@@ -251,7 +250,7 @@
 //!
 //! // Create a new tree
 //! let mut tree = FmmTree::new(
-//!     source_points.clone(),
+//!     source_points,
 //!     interpolation_order,
 //!     kernel,
 //!     adaptive_tree,
@@ -262,20 +261,20 @@
 //!
 //! // Set the weights - this performs an upward pass through the tree
 //! // and sets the multipole coefficients
-//! tree.set_weights(&weights.as_ref());
+//! tree.set_weights(weights.as_ref());
 //!
 //! // For implicit modelling where a 'surface following' method of generating an isosurface
 //! // is used, the evaluator may be called many times. In this case it's more efficient to
 //! // perform a single downward pass to set all the local coefficients, then call the evaluator
 //! // on the relevant leaves for each evaluation
-//! tree.set_local_coefficients(&weights.as_ref());
+//! tree.set_local_coefficients(weights.as_ref());
 //!
 //! // Create some arbritrary target points
 //! let num_target_points = 100;
 //! let target_points = Mat::from_fn(num_target_points, dim, |_, _| rng.random_range(-2.0..2.0));
 //!
 //! // Perform a leaf evaluation
-//! let target_values = tree.evaluate_leaves(&weights.as_ref(), &target_points).unwrap();
+//! let target_values = tree.evaluate_leaves(weights.as_ref(), target_points.as_ref()).unwrap();
 //!
 //! println!("Evaluated values at target locations: {:?}", target_values);
 //!
@@ -284,7 +283,7 @@
 //! let target_points = Mat::from_fn(num_target_points, dim, |_, _| rng.random_range(-2.0..2.0));
 //!
 //! // Perform another leaf evaluation
-//! let target_values = tree.evaluate_leaves(&weights.as_ref(), &target_points).unwrap();
+//! let target_values = tree.evaluate_leaves(weights.as_ref(), target_points.as_ref()).unwrap();
 //!
 //! println!("Evaluated values at target locations: {:?}", target_values);
 //! ```

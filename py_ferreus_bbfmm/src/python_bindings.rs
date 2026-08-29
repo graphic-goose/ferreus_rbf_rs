@@ -8,13 +8,14 @@
 //
 /////////////////////////////////////////////////////////////////////////////////////////////
 
-use faer::{Mat, MatRef};
+use faer::{Mat, MatRef, mat::AsMatRef};
 use faer_ext::IntoFaer;
 use ferreus_bbfmm::FmmError;
 use ferreus_rbf_utils;
 use ferreus_rbf_utils::KernelType;
 use numpy::{PyArray1, PyArray2, PyArrayMethods, PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::prelude::*;
+use std::sync::Arc;
 
 /// Convert a NumPy array into a 'faer::MatRef<T>'.
 fn numpy_to_matref<'py, T>(
@@ -227,13 +228,13 @@ impl FmmTree {
         extents: Option<PyReadonlyArray1<'_, f64>>,
         params: Option<FmmParams>,
     ) -> PyResult<Self> {
-        let source_points_mat = numpy_to_matref::<f64>(py, &source_points)
+        let source_points_mat = Arc::new(numpy_to_matref::<f64>(py, &source_points)
             .map_err(|_| {
                 pyo3::exceptions::PyTypeError::new_err(
                     "Expected a 1D/2D float64 array for source_points",
                 )
             })?
-            .to_owned();
+            .to_owned());
         let extents_vec = extents.map(|e| e.to_vec().unwrap().clone());
         let p = params.map(|p| p.inner);
 
@@ -254,7 +255,7 @@ impl FmmTree {
         let w = numpy_to_matref(py, &weights).map_err(|_| {
             pyo3::exceptions::PyTypeError::new_err("Expected 1D/2D float64 for weights")
         })?;
-        self.inner.set_weights(&w);
+        self.inner.set_weights(w);
         Ok(())
     }
 
@@ -263,7 +264,7 @@ impl FmmTree {
         let w = numpy_to_matref(py, &weights).map_err(|_| {
             pyo3::exceptions::PyTypeError::new_err("Expected 1D/2D float64 for weights")
         })?;
-        self.inner.set_local_coefficients(&w);
+        self.inner.set_local_coefficients(w);
         Ok(())
     }
 
@@ -282,7 +283,7 @@ impl FmmTree {
                 pyo3::exceptions::PyTypeError::new_err("Expected 1D/2D float64 for target_points")
             })?
             .to_owned();
-        let target_values = self.inner.evaluate(&w, &x).map_err(|err| {
+        let target_values = self.inner.evaluate(w, x.as_mat_ref()).map_err(|err| {
             let msg = match err {
                 FmmError::PointOutsideTree { point_index } => format!(
                     "FMM evaluation failed: target point at row {} lies outside the tree extents",
@@ -312,7 +313,7 @@ impl FmmTree {
                 pyo3::exceptions::PyTypeError::new_err("Expected 1D/2D float64 for target_points")
             })?
             .to_owned();
-        let (target_values, gradients) = self.inner.evaluate_with_gradients(&w, &x).map_err(|err| {
+        let (target_values, gradients) = self.inner.evaluate_with_gradients(w, x.as_mat_ref()).map_err(|err| {
             let msg = match err {
                 FmmError::PointOutsideTree { point_index } => format!(
                     "FMM evaluation failed: target point at row {} lies outside the tree extents",
@@ -346,7 +347,7 @@ impl FmmTree {
             })?
             .to_owned();
         let target_points = self.inner
-            .evaluate_leaves(&w, &x)
+            .evaluate_leaves(w, x.as_mat_ref())
             .map_err(|err| {
                 let msg = match err {
                     FmmError::PointOutsideTree { point_index } => format!(
@@ -377,7 +378,7 @@ impl FmmTree {
                 pyo3::exceptions::PyTypeError::new_err("Expected 1D/2D float64 for target_points")
             })?
             .to_owned();
-        let (target_values, gradients) = self.inner.evaluate_leaves_with_gradients(&w, &x).map_err(|err| {
+        let (target_values, gradients) = self.inner.evaluate_leaves_with_gradients(w, x.as_mat_ref()).map_err(|err| {
             let msg = match err {
                 FmmError::PointOutsideTree { point_index } => format!(
                     "FMM evaluation failed: target point at row {} lies outside the tree extents",
