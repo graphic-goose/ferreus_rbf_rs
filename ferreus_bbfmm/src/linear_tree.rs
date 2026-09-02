@@ -495,7 +495,7 @@ pub fn points_to_keys(
     let side_length = morton::get_side_length(radius, depth);
     let displacement: Vec<f64> = center.iter().map(|&c| c - radius).collect();
 
-    let results: Vec<Result<u64, FmmError>> = points
+    points
         .par_row_iter()
         .enumerate()
         .map(|(idx, point)| {
@@ -509,14 +509,7 @@ pub fn points_to_keys(
 
             Ok(current_key)
         })
-        .collect();
-
-    let mut keys = Vec::with_capacity(points.nrows());
-    for r in results {
-        keys.push(r?);
-    }
-
-    Ok(keys)
+        .collect()
 }
 
 pub fn get_points_to_leaves_map(point_keys: &Vec<u64>) -> HashMap<u64, Vec<usize>> {
