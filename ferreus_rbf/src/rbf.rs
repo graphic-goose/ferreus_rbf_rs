@@ -1260,11 +1260,16 @@ impl RBFInterpolator {
 /// - Adds polynomial (monomial) contribution if a polynomial basis is enabled.
 #[inline(always)]
 fn _evaluate(evaluator_params: EvaluatorParams) -> Result<(Mat<f64>, Option<Mat<f64>>), FmmError> {
-    let mut eval_points = evaluator_params.target_points.clone().to_owned();
-
-    if let Some(gt) = evaluator_params.global_trend {
-        eval_points = gt.transform_points(evaluator_params.target_points);
-    }
+    // Borrow the targets directly when no global trend is present; only a
+    // trend transform materializes a transformed copy of the points.
+    let transformed_points;
+    let eval_points: MatRef<f64> = match evaluator_params.global_trend {
+        Some(gt) => {
+            transformed_points = gt.transform_points(evaluator_params.target_points);
+            transformed_points.as_mat_ref()
+        }
+        None => evaluator_params.target_points,
+    };
 
     let (mut values, mut gradients) = match (
         evaluator_params.evaluator_mode,
@@ -1273,28 +1278,28 @@ fn _evaluate(evaluator_params: EvaluatorParams) -> Result<(Mat<f64>, Option<Mat<
         (FmmEvaluatorMode::Leaves, false) => (
             evaluator_params.tree.evaluate_leaves(
                 evaluator_params.coefficients.point_coefficients.as_mat_ref(),
-                eval_points.as_mat_ref(),
+                eval_points,
             )?,
             None,
         ),
         (FmmEvaluatorMode::Leaves, true) => {
             let (values, gradients) = evaluator_params.tree.evaluate_leaves_with_gradients(
                 evaluator_params.coefficients.point_coefficients.as_mat_ref(),
-                eval_points.as_mat_ref(),
+                eval_points,
             )?;
             (values, Some(gradients))
         }
         (FmmEvaluatorMode::Full, false) => (
             evaluator_params.tree.evaluate(
                 evaluator_params.coefficients.point_coefficients.as_mat_ref(),
-                eval_points.as_mat_ref(),
+                eval_points,
             )?,
             None,
         ),
         (FmmEvaluatorMode::Full, true) => {
             let (values, gradients) = evaluator_params.tree.evaluate_with_gradients(
                 evaluator_params.coefficients.point_coefficients.as_mat_ref(),
-                eval_points.as_mat_ref(),
+                eval_points,
             )?;
             (values, Some(gradients))
         }
