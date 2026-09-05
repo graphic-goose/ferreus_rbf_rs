@@ -1118,9 +1118,18 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
         target_values_ref: MatRef<f64>,
         target_gradients_ref: Option<MatRef<f64>>,
     ) {
-        self.tree_lists
+        // Chunk evaluate per leaf
+        let chunk_size = self.eval_chunk_size.max(1);
+        let work_items: Vec<(&u64, &[usize])> = self
+            .tree_lists
             .leaf_target_indices
-            .par_iter()
+            .iter()
+            .flat_map(|(leaf, indices)| {
+                indices.chunks(chunk_size).map(move |chunk| (leaf, chunk))
+            })
+            .collect();
+        work_items
+            .into_par_iter()
             .for_each(|(leaf, leaf_target_indices)| {
                 if let Some(u_list) = self.tree_lists.u_lists.get(leaf) {
                     if !u_list.is_empty() {
