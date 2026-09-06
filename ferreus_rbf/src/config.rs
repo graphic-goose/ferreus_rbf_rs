@@ -41,8 +41,7 @@ use serde::{Deserialize, Serialize};
 /// - `coarse_threshold`: `4096`
 #[derive(Clone, Copy, Serialize, Deserialize, Debug)]
 pub struct DDMParams {
-    /// Target maximum number of points (internal + overlapping)
-    /// within a leaf domain.
+    /// Target maximum number of internal points within a leaf domain.
     pub leaf_threshold: usize,
 
     /// Number of nearest neighbours of each internal point to query to find overlapping points.
