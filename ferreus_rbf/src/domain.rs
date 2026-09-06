@@ -67,10 +67,10 @@ impl DomainSolver {
         }
     }
 
-    pub fn solve(&self, rhs: &Mat<f64>) -> Mat<f64> {
+    pub fn solve(&self, rhs: &Mat<f64>, par: Par) -> Mat<f64> {
         match self {
-            DomainSolver::Llt(s) => s.solve(rhs),
-            DomainSolver::Lblt(s) => s.solve(rhs),
+            DomainSolver::Llt(s) => s.solve(rhs, par),
+            DomainSolver::Lblt(s) => s.solve(rhs, par),
         }
     }
 }
@@ -382,7 +382,7 @@ impl Domain {
     /// For the polynomial-augmented case, the rhs is projected into the reduced
     /// space via the Q matrix before solving, and polynomial coefficients are
     /// recovered afterwards.    
-    pub fn solve(&self, source_values: &MatRef<f64>) -> Coefficients {
+    pub fn solve(&self, source_values: &MatRef<f64>, par: Par) -> Coefficients {
         let num_points: usize;
         let rhs: Mat<f64>;
         let num_source_points = self.overlapping_point_indices.len();
@@ -414,7 +414,7 @@ impl Domain {
         let mut poly_coefficients = None;
 
         // Solve system.
-        let gamma = self.solver.solve(&rhs);
+        let gamma = self.solver.solve(&rhs, par);
 
         if self.q_matrix_top.is_some() {
             // Set lambda = Q * gamma
@@ -628,7 +628,7 @@ mod tests {
             &None,
         );
 
-        let domain_coefficients = naive_domain.solve(&values.as_ref());
+        let domain_coefficients = naive_domain.solve(&values.as_ref(), Par::Seq);
 
         let mut domain_point_coefficients = Mat::<f64>::zeros(num_points, 1);
 

@@ -59,9 +59,9 @@ impl<T: ComplexField> LltRfp<T> {
         Ok(Self { L: AR, side: side })
     }
 
-    pub fn solve(&self, rhs: &Mat<T>) -> Mat<T> {
+    pub fn solve(&self, rhs: &Mat<T>, par: Par) -> Mat<T> {
         // Solve A @ X = B in RFP format.
-        let X = cholesky_rfp_solve(&self.L, &rhs, &self.side);
+        let X = cholesky_rfp_solve(&self.L, &rhs, &self.side, par);
         X
     }
 }
@@ -358,13 +358,11 @@ fn cholesky_rfp_factor<T: ComplexField>(
 ///
 /// Follows LAPACK's `DPFTRS` logic.
 #[allow(non_snake_case)]
-fn cholesky_rfp_solve<T: ComplexField>(AR: &Mat<T>, B: &Mat<T>, side: &Side) -> Mat<T> {
+fn cholesky_rfp_solve<T: ComplexField>(AR: &Mat<T>, B: &Mat<T>, side: &Side, par: Par) -> Mat<T> {
     let (LDAR, n1) = AR.shape();
     let (even, n2) = get_dims_from_rfp(&LDAR, &n1);
 
     let (num_b_rows, num_b_cols) = B.shape();
-
-    let par = faer::get_global_parallelism();
 
     let mut X = B.clone();
 
@@ -581,14 +579,13 @@ impl<T: ComplexField> Lblt<T> {
         }
     }
 
-    pub fn solve(&self, rhs: &Mat<T>) -> Mat<T> {
+    pub fn solve(&self, rhs: &Mat<T>, par: Par) -> Mat<T> {
         let mut rhs = rhs.cloned();
-        self.solve_in_place_with_conj_impl(rhs.as_mat_mut(), Conj::No);
+        self.solve_in_place_with_conj_impl(rhs.as_mat_mut(), Conj::No, par);
         rhs
     }
 
-    fn solve_in_place_with_conj_impl(&self, rhs: MatMut<'_, T>, conj: Conj) {
-        let par = faer::get_global_parallelism();
+    fn solve_in_place_with_conj_impl(&self, rhs: MatMut<'_, T>, conj: Conj, par: Par) {
         let rhs_nrows = rhs.nrows();
 
         let factors = unpack_tril_colmajor(self.L.as_ref(), rhs_nrows);
@@ -696,7 +693,7 @@ mod tests {
 
         // RFP factor + solve (lower)
         let llt = LltRfp::<f64>::try_new(a.as_ref(), side).expect("LLᵀ should succeed for SPD");
-        let x_rfp = llt.solve(&b);
+        let x_rfp = llt.solve(&b, Par::Seq);
 
         // Standard solve
         let chol = a.llt(side);
@@ -718,7 +715,7 @@ mod tests {
         let side = Side::Lower;
 
         let llt = LltRfp::<f64>::try_new(a.as_ref(), side).expect("LLᵀ should succeed for SPD");
-        let x_rfp = llt.solve(&b);
+        let x_rfp = llt.solve(&b, Par::Seq);
 
         let chol = a.llt(side);
         let x_std = chol.unwrap().solve(&b);
@@ -736,7 +733,7 @@ mod tests {
         let side = Side::Upper;
 
         let llt = LltRfp::<f64>::try_new(a.as_ref(), side).expect("LLᵀ should succeed for SPD");
-        let x_rfp = llt.solve(&b);
+        let x_rfp = llt.solve(&b, Par::Seq);
 
         let chol = a.llt(side);
         let x_std = chol.unwrap().solve(&b);
@@ -754,7 +751,7 @@ mod tests {
         let side = Side::Upper;
 
         let llt = LltRfp::<f64>::try_new(a.as_ref(), side).expect("LLᵀ should succeed for SPD");
-        let x_rfp = llt.solve(&b);
+        let x_rfp = llt.solve(&b, Par::Seq);
 
         let chol = a.llt(side);
         let x_std = chol.unwrap().solve(&b);

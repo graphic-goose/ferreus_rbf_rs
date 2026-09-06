@@ -78,7 +78,7 @@ impl DDMTree {
 
         let mut active_point_indices: Vec<usize> = (0..num_points).into_iter().collect();
 
-        let num_levels = get_num_levels(
+        let num_level_reductions = get_num_level_reductions(
             active_point_indices.len(),
             ddm_params.coarse_threshold,
             ddm_params.coarse_reduction_factor,
@@ -175,14 +175,14 @@ impl DDMTree {
             }
 
             // Calculate the exact number of coarse points required for the next level.
-            let remaining_hierarchy_reductions = num_levels
+            let remaining_level_reductions = num_level_reductions
                 .saturating_sub(levels.len())
                 .max(1);
 
             let num_level_coarse_points = get_num_level_coarse_points(
                 active_point_indices.len(),
                 ddm_params.coarse_threshold,
-                remaining_hierarchy_reductions,
+                remaining_level_reductions,
             );
 
             // Distribute the global coarse-point count between the leaf domains.
@@ -375,7 +375,7 @@ fn get_centroid(points: &Mat<f64>) -> Vec<f64> {
 
 /// Calculates the number of level reductions required to reach the
 /// direct coarse problem.
-fn get_num_levels(
+fn get_num_level_reductions(
     num_points: usize,
     coarse_threshold: usize,
     coarse_reduction_factor: usize,
@@ -387,27 +387,27 @@ fn get_num_levels(
     }
 
     let mut covered_points = coarse_threshold;
-    let mut num_levels = 0;
+    let mut num_level_reductions = 0;
 
     while covered_points < num_points {
         covered_points = covered_points
             .saturating_mul(coarse_reduction_factor);
 
-        num_levels += 1;
+        num_level_reductions += 1;
     }
 
-    num_levels
+    num_level_reductions
 }
 
 /// Calculates the number of points required at the next coarser level.
 fn get_num_level_coarse_points(
     num_active_points: usize,
     coarse_threshold: usize,
-    remaining_hierarchy_reductions: usize,
+    remaining_level_reductions: usize,
 ) -> usize {
     let coarse_ratio =
         (coarse_threshold as f64 / num_active_points as f64)
-            .powf(1.0 / remaining_hierarchy_reductions as f64);
+            .powf(1.0 / remaining_level_reductions as f64);
 
     ((num_active_points as f64 * coarse_ratio).ceil() as usize)
         .clamp(1, num_active_points - 1)
@@ -521,11 +521,11 @@ mod tests {
 
     #[test]
     fn hierarchy_reductions_use_configured_factor() {
-        assert_eq!(get_num_levels(4_096, 4_096, 128), 0);
-        assert_eq!(get_num_levels(524_288, 4_096, 128), 1);
-        assert_eq!(get_num_levels(524_289, 4_096, 128), 2);
-        assert_eq!(get_num_levels(32_768, 4_096, 8), 1);
-        assert_eq!(get_num_levels(32_769, 4_096, 8), 2);
+        assert_eq!(get_num_level_reductions(4_096, 4_096, 128), 0);
+        assert_eq!(get_num_level_reductions(524_288, 4_096, 128), 1);
+        assert_eq!(get_num_level_reductions(524_289, 4_096, 128), 2);
+        assert_eq!(get_num_level_reductions(32_768, 4_096, 8), 1);
+        assert_eq!(get_num_level_reductions(32_769, 4_096, 8), 2);
     }
 
     fn run_union_test(dim: usize) {

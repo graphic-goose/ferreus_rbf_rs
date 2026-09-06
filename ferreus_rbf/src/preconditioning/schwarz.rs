@@ -26,7 +26,7 @@
 
 use super::domain_decomposition::DDMTree;
 use crate::interpolant_config::InterpolantSettings;
-use faer::{Mat, MatMut, MatRef};
+use faer::{Mat, MatMut, MatRef, Par};
 use rayon::iter::{IntoParallelRefMutIterator, ParallelIterator};
 
 pub fn schwarz_preconditioner<F>(
@@ -93,7 +93,7 @@ fn solve_fine_level(
         .leaf_domains
         .par_iter_mut()
         .for_each(|domain| {
-            let coeff = domain.solve(&residuals.as_ref());
+            let coeff = domain.solve(&residuals.as_ref(), Par::Seq);
 
             // SAFETY: Since we're only writing back values from each subdomain's
             // internal points and the union of all subdomain internal points is the
@@ -132,7 +132,7 @@ fn solve_coarse_level(residuals: Mat<f64>, ddm_tree: &mut DDMTree, add_poly: boo
 
     let coarse_domain = &ddm_tree.levels[coarse_idx].leaf_domains[0];
 
-    let coeffs = coarse_domain.solve(&residuals.as_ref());
+    let coeffs = coarse_domain.solve(&residuals.as_ref(), faer::get_global_parallelism());
 
     coarse_domain
         .overlapping_point_indices

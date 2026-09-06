@@ -447,7 +447,7 @@ impl RBFInterpolator {
                 &self.global_trend,
             );
 
-            let domain_coefficients = naive_domain.solve(&self.point_values.as_ref());
+            let domain_coefficients = naive_domain.solve(&self.point_values.as_ref(), faer::get_global_parallelism());
 
             let mut global_point_coefficients = Mat::<f64>::zeros(num_points, num_val_cols);
 
