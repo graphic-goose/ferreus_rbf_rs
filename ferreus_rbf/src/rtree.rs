@@ -12,211 +12,155 @@
 //!
 //! Wrapper module for the rstar crate.
 //!
-//! Allows the building of an Rtree using extent rectangles and subsequent
-//! querying of neighbouring/intersecting rectangles.
+//! Allows the building of an Rtree using points and subsequent
+//! querying of neighbouring/intersecting points.
 
-use rstar::primitives::{GeomWithData, Rectangle};
-use rstar::{AABB, RTree};
-use std::convert::TryInto;
+use faer::MatRef;
+use rstar::primitives::GeomWithData;
+use rstar::RTree;
 
-// rstar doesn't support 1D natively, so we've worked around
-// that by treating it as a 2D problem and setting the y component
-// for each rectangle added/queried to a min of 0 and max of 1.
-// 1D is represented as 2D rectangles (y in [0,1])
-type Rect1As2 = GeomWithData<Rectangle<[f64; 2]>, usize>;
-type Rect2 = GeomWithData<Rectangle<[f64; 2]>, usize>;
-type Rect3 = GeomWithData<Rectangle<[f64; 3]>, usize>;
+type IndexedPoint<const D: usize> = GeomWithData<[f64; D], usize>;
 
-pub enum NdRTree {
-    D1(RTree<Rect1As2>), // 1D embedded in 2D
-    D2(RTree<Rect2>),
-    D3(RTree<Rect3>),
+/// Point index retaining each point's global row index. One-dimensional data is
+/// embedded in two dimensions because `rstar` does not implement 1D R-trees.
+pub(crate) enum NdPointRTree {
+    D1(RTree<IndexedPoint<2>>),
+    D2(RTree<IndexedPoint<2>>),
+    D3(RTree<IndexedPoint<3>>),
 }
 
-impl NdRTree {
-    // Finds all neighbourings/intersecting rectangles to the query extents.
-    pub fn find_neighbours(&self, domain_extents: &[f64], i: usize) -> Vec<usize> {
-        match self {
-            NdRTree::D1(tree) => find_neighbours_1d_as2d(tree, domain_extents, i),
-            NdRTree::D2(tree) => find_neighbours::<2>(tree, domain_extents, i),
-            NdRTree::D3(tree) => find_neighbours::<3>(tree, domain_extents, i),
-        }
+impl NdPointRTree {
+    /// Return at most `count` points ordered deterministically by squared distance
+    /// and then global row index.
+    pub(crate) fn nearest(&self, point: &[f64], count: usize) -> Vec<(usize, f64)> {
+        let mut result = match self {
+            Self::D1(tree) => nearest_points(tree, &[point[0], 0.0], count),
+            Self::D2(tree) => nearest_points(tree, &[point[0], point[1]], count),
+            Self::D3(tree) => nearest_points(tree, &[point[0], point[1], point[2]], count),
+        };
+        result.sort_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+        result
     }
+
+    /// Returns the global indices of points within an infinity-norm distance
+    /// of the supplied point.
+    pub(crate) fn within_distance_inf(
+        &self,
+        point: &[f64],
+        distance: f64,
+    ) -> Vec<usize> {
+        let mut result = match self {
+            Self::D1(tree) => points_in_box(
+                tree,
+                [point[0], 0.0],
+                distance,
+            ),
+            Self::D2(tree) => points_in_box(
+                tree,
+                [point[0], point[1]],
+                distance,
+            ),
+            Self::D3(tree) => points_in_box(
+                tree,
+                [point[0], point[1], point[2]],
+                distance,
+            ),
+        };
+
+        result.sort_unstable();
+        result
+    }
+
 }
 
-/// For D=2 or D=3: `extents = [mins..., maxs...]` (len = 2*D)
-fn rectangle_from_extents_nd<const D: usize>(extents: &[f64]) -> Rectangle<[f64; D]> {
-    assert!(
-        extents.len() == 2 * D,
-        "expected {} extents for dimension {}, got {}",
-        2 * D,
-        D,
-        extents.len()
-    );
-    let (min_slice, max_slice) = extents.split_at(D);
-    let mins: [f64; D] = min_slice.try_into().expect("min slice length mismatch");
-    let maxs: [f64; D] = max_slice.try_into().expect("max slice length mismatch");
-    Rectangle::from_corners(mins, maxs)
-}
-
-/// 1D embedded as 2D with y in [0,1]
-fn rectangle_from_extents_1d_as2d(extents: &[f64]) -> Rectangle<[f64; 2]> {
-    assert!(extents.len() == 2, "1D expects [min_x, max_x]");
-    Rectangle::from_corners([extents[0], 0.0], [extents[1], 1.0])
-}
-
-/// A wrapper that holds a AABB‐rectangle and usize index.
-type IndexedRect<const D: usize> = GeomWithData<Rectangle<[f64; D]>, usize>;
-
-/// Build up an RTree of IndexedRect<D> so that each leaf knows its domain‐index.
-fn bulk_load_indexed_nd<const D: usize>(items: Vec<IndexedRect<D>>) -> RTree<IndexedRect<D>> {
-    RTree::bulk_load(items)
-}
-
-fn find_neighbours<const D: usize>(
-    tree: &RTree<IndexedRect<D>>,
-    domain_extents: &[f64],
-    i: usize,
-) -> Vec<usize> {
-    let (min_slice, max_slice) = domain_extents.split_at(D);
-    let mins: [f64; D] = min_slice.try_into().unwrap();
-    let maxs: [f64; D] = max_slice.try_into().unwrap();
-    let envelope = AABB::from_corners(mins, maxs);
-    tree.locate_in_envelope_intersecting(&envelope)
-        .map(|item| item.data)
-        .filter(|&idx| idx != i)
+fn nearest_points<const D: usize>(
+    tree: &RTree<IndexedPoint<D>>,
+    point: &[f64; D],
+    count: usize,
+) -> Vec<(usize, f64)> {
+    tree.nearest_neighbor_iter_with_distance_2(point)
+        .take(count)
+        .map(|(item, distance_2)| (item.data, distance_2))
         .collect()
 }
 
-fn find_neighbours_1d_as2d(tree: &RTree<Rect1As2>, domain_extents: &[f64], i: usize) -> Vec<usize> {
-    debug_assert_eq!(domain_extents.len(), 2); // [min_x, max_x]
-    let envelope = AABB::from_corners([domain_extents[0], 0.0], [domain_extents[1], 1.0]);
-    tree.locate_in_envelope_intersecting(&envelope)
-        .map(|item| item.data)
-        .filter(|&idx| idx != i)
-        .collect()
-}
-
-/// Build an NdRTree from an iterator over (index, extents) where
-/// `extents = [mins..., maxs...]` of length 2*dimensions.
-/// For `dimensions == 1`, intervals are embedded as 2D rectangles with y∈[0,1].
-pub fn build_nd_rtree_from_extents<'a, I>(dimensions: usize, items: I) -> NdRTree
-where
-    I: IntoIterator<Item = (usize, &'a [f64])>,
-{
+pub(crate) fn build_nd_point_rtree(
+    dimensions: usize,
+    points: MatRef<f64>,
+    indices: &[usize],
+) -> NdPointRTree {
     match dimensions {
-        1 => {
-            let rects = items
-                .into_iter()
-                .map(|(idx, ext)| {
-                    let rect = rectangle_from_extents_1d_as2d(ext);
-                    GeomWithData::new(rect, idx)
+        1 => NdPointRTree::D1(RTree::bulk_load(
+            indices
+                .iter()
+                .map(|&index| GeomWithData::new([points[(index, 0)], 0.0], index))
+                .collect(),
+        )),
+        2 => NdPointRTree::D2(RTree::bulk_load(
+            indices
+                .iter()
+                .map(|&index| {
+                    GeomWithData::new([points[(index, 0)], points[(index, 1)]], index)
                 })
-                .collect::<Vec<_>>();
-            NdRTree::D1(bulk_load_indexed_nd::<2>(rects))
-        }
-        2 => {
-            let rects = items
-                .into_iter()
-                .map(|(idx, ext)| {
-                    let rect = rectangle_from_extents_nd::<2>(ext);
-                    GeomWithData::new(rect, idx)
+                .collect(),
+        )),
+        3 => NdPointRTree::D3(RTree::bulk_load(
+            indices
+                .iter()
+                .map(|&index| {
+                    GeomWithData::new(
+                        [points[(index, 0)], points[(index, 1)], points[(index, 2)]],
+                        index,
+                    )
                 })
-                .collect::<Vec<_>>();
-            NdRTree::D2(bulk_load_indexed_nd::<2>(rects))
-        }
-        3 => {
-            let rects = items
-                .into_iter()
-                .map(|(idx, ext)| {
-                    let rect = rectangle_from_extents_nd::<3>(ext);
-                    GeomWithData::new(rect, idx)
-                })
-                .collect::<Vec<_>>();
-            NdRTree::D3(bulk_load_indexed_nd::<3>(rects))
-        }
-        _ => panic!("Unsupported dimensions for NdRTree"),
+                .collect(),
+        )),
+        _ => panic!("unsupported point dimension {dimensions}; expected 1, 2, or 3"),
     }
+}
+
+fn points_in_box<const D: usize>(
+    tree: &RTree<IndexedPoint<D>>,
+    point: [f64; D],
+    distance: f64,
+) -> Vec<usize> {
+    use rstar::AABB;
+
+    let minimum =
+        std::array::from_fn(|dimension| point[dimension] - distance);
+    let maximum =
+        std::array::from_fn(|dimension| point[dimension] + distance);
+
+    let envelope = AABB::from_corners(minimum, maximum);
+
+    tree.locate_in_envelope_intersecting(&envelope)
+        .map(|point| point.data)
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rstar::primitives::GeomWithData;
+    use faer::Mat;
 
     #[test]
-    fn rtree_1d_neighbours() {
-        // intervals: [0,1], [1,2], [3,4] (embedded as y∈[0,1])
-        let rects = vec![
-            GeomWithData::new(rectangle_from_extents_1d_as2d(&[0.0, 1.0]), 0),
-            GeomWithData::new(rectangle_from_extents_1d_as2d(&[1.0, 2.0]), 1),
-            GeomWithData::new(rectangle_from_extents_1d_as2d(&[3.0, 4.0]), 2),
-        ];
-        let tree = NdRTree::D1(bulk_load_indexed_nd::<2>(rects));
-
-        // neighbours of [1,2] (index=1) — touching at x=1 counts as intersecting
-        let n = tree.find_neighbours(&[1.0, 2.0], 1);
-        assert!(n.contains(&0));
-        assert!(!n.contains(&2));
-        assert!(!n.contains(&1), "must not include itself");
+    fn nearest_is_deterministic_for_distance_ties() {
+        let coordinates = [[0.0, 0.0], [1.0, 0.0], [-1.0, 0.0], [0.0, 2.0]];
+        let points = Mat::from_fn(4, 2, |row, column| coordinates[row][column]);
+        let tree = build_nd_point_rtree(2, points.as_ref(), &[0, 1, 2, 3]);
+        assert_eq!(
+            tree.nearest(&[0.0, 0.0], 3)
+                .into_iter()
+                .map(|entry| entry.0)
+                .collect::<Vec<_>>(),
+            vec![0, 1, 2]
+        );
     }
 
     #[test]
-    fn rtree_2d_neighbours() {
-        // squares: [0,0]-[1,1], [1,0]-[2,1], [3,3]-[4,4]
-        let rects = vec![
-            GeomWithData::new(rectangle_from_extents_nd::<2>(&[0.0, 0.0, 1.0, 1.0]), 0),
-            GeomWithData::new(rectangle_from_extents_nd::<2>(&[1.0, 0.0, 2.0, 1.0]), 1),
-            GeomWithData::new(rectangle_from_extents_nd::<2>(&[3.0, 3.0, 4.0, 4.0]), 2),
-        ];
-        let tree = NdRTree::D2(bulk_load_indexed_nd::<2>(rects));
-
-        // Query neighbours for rect 1
-        let n = tree.find_neighbours(&[1.0, 0.0, 2.0, 1.0], 1);
-        assert!(n.contains(&0), "touching edge should count as intersecting");
-        assert!(!n.contains(&2), "far square shouldn't intersect");
-        assert!(!n.contains(&1), "must not include itself");
-
-        // Query a non-overlapping box (empty result)
-        let empty = tree.find_neighbours(&[10.0, 10.0, 11.0, 11.0], usize::MAX);
-        assert!(empty.is_empty());
-    }
-
-    #[test]
-    fn rtree_3d_neighbours() {
-        // cubes: [0,0,0]-[1,1,1], [1,0,0]-[2,1,1], [3,3,3]-[4,4,4]
-        let rects = vec![
-            GeomWithData::new(
-                rectangle_from_extents_nd::<3>(&[0.0, 0.0, 0.0, 1.0, 1.0, 1.0]),
-                0,
-            ),
-            GeomWithData::new(
-                rectangle_from_extents_nd::<3>(&[1.0, 0.0, 0.0, 2.0, 1.0, 1.0]),
-                1,
-            ),
-            GeomWithData::new(
-                rectangle_from_extents_nd::<3>(&[3.0, 3.0, 3.0, 4.0, 4.0, 4.0]),
-                2,
-            ),
-        ];
-        let tree = NdRTree::D3(bulk_load_indexed_nd::<3>(rects));
-
-        // Query neighbours for cube 1
-        let n = tree.find_neighbours(&[1.0, 0.0, 0.0, 2.0, 1.0, 1.0], 1);
-        assert!(n.contains(&0));
-        assert!(!n.contains(&2));
-        assert!(!n.contains(&1));
-    }
-
-    #[test]
-    fn rtree_find_neighbours_excludes_self_in_all_dims() {
-        // 2D example — but behaviour is the same across dims
-        let rects = vec![GeomWithData::new(
-            rectangle_from_extents_nd::<2>(&[0.0, 0.0, 1.0, 1.0]),
-            42,
-        )];
-        let tree = NdRTree::D2(bulk_load_indexed_nd::<2>(rects));
-        let n = tree.find_neighbours(&[0.0, 0.0, 1.0, 1.0], 42);
-        assert!(n.is_empty(), "self should not be listed as neighbour");
+    fn noncontiguous_indices_remain_global() {
+        let points = Mat::from_fn(5, 1, |row, _| row as f64);
+        let tree = build_nd_point_rtree(1, points.as_ref(), &[1, 4]);
+        assert_eq!(tree.nearest(&[3.9], 2)[0].0, 4);
     }
 }

@@ -106,7 +106,6 @@ mod domain;
 mod global_trend;
 pub mod interpolant_config;
 mod iterative_solvers;
-mod kdtree;
 mod linalg;
 mod polynomials;
 mod preconditioning;
@@ -115,6 +114,7 @@ mod rbf;
 mod rbf_test_functions;
 mod rtree;
 mod serde_faer_mat;
+mod worker_pool;
 
 /// Functions related to isosurfacing algorithms
 pub mod isosurfacing {

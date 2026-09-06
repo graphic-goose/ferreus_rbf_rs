@@ -64,27 +64,27 @@ class DDMParams:
     
     Default values when [`DDMParams`][ferreus_rbf.config.DDMParams] isn't provided to [`RBFInterpolator`][ferreus_rbf.RBFInterpolator]: 
 
-    - `leaf_threshold`: `1024`  
-    - `overlap_quota`: `0.5`  
-    - `coarse_ratio`: `0.125`  
+    - `leaf_threshold`: `256`  
+    - `overlap_knn`: `16`  
+    - `coarse_reduction_factor`: `128`  
     - `coarse_threshold`: `4096`     
 
     Parameters
     ----------
     leaf_threshold : int
         Target maximum number of points (internal + overlapping) within a leaf domain.
-    overlap_quota : float
-        Overlap fraction. Larger fraction will add more overlapping points to each leaf domain.
-    coarse_ratio : float
-        Fraction of **internal** points per leaf promoted to the next coarser level.
+    overlap_knn : int
+        Number of nearest neighbours of each internal point to query to find overlapping points.
+    coarse_reducation_factor : int
+        Maximum reduction factor between consecutive levels of the domain decomposition hierarchy.
     coarse_threshold : int
         Maximum number of points in the coarsest level.
     """
     def __init__(
         self,
         leaf_threshold: int,
-        overlap_quota: float,
-        coarse_ratio: float,
+        overlap_knn: int,
+        coarse_reduction_factor: int,
         coarse_threshold: int,
     ) -> None: ...
 

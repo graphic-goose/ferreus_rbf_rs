@@ -16,7 +16,6 @@ use crate::{
     interpolant_config::InterpolantSettings,
     isosurfacing::{self, Mesh},
     iterative_solvers,
-    kdtree::{DistanceMetric, KDTree, PointRowWithId},
     polynomials,
     preconditioning::{domain_decomposition::DDMTree, schwarz},
     progress::{ProgressMsg, ProgressSink, ProgressSinkExt},
@@ -354,8 +353,8 @@ impl RBFInterpolator {
                     });
                 }
                 (
-                    ferreus_rbf_utils::select_mat_rows(&points, &idx),
-                    ferreus_rbf_utils::select_mat_rows(&point_values, &idx),
+                    ferreus_rbf_utils::select_mat_rows(points.as_ref(), &idx),
+                    ferreus_rbf_utils::select_mat_rows(point_values.as_ref(), &idx),
                 )
             }
         } else {
@@ -416,6 +415,16 @@ impl RBFInterpolator {
     }
 
     fn setup_and_solve(&mut self) {
+        if self.points.nrows() >= self.params.naive_solve_threshold {
+            return crate::worker_pool::install(|| {
+                self.setup_and_solve_impl()
+            });
+        }
+
+        self.setup_and_solve_impl();
+    }
+
+    fn setup_and_solve_impl(&mut self) {
         let num_points = self.points.nrows();
         let num_val_cols = self.point_values.ncols();
 
@@ -432,7 +441,7 @@ impl RBFInterpolator {
                 vec![true; naive_domain.overlapping_point_indices.len()];
 
             naive_domain.factorise(
-                &self.points,
+                self.points.as_mat_ref(),
                 self.interpolant_settings.clone(),
                 true,
                 &self.global_trend,
@@ -508,7 +517,7 @@ impl RBFInterpolator {
             }
 
             let ddm_tree = DDMTree::new(
-                &self.points,
+                self.points.as_mat_ref(),
                 &self.interpolant_settings,
                 self.params.ddm_params,
                 &self.global_trend,
@@ -1229,11 +1238,11 @@ impl RBFInterpolator {
             })?;
 
         // Validate envelope
-        if env.format != JSON_FORMAT_NAME {
-            return Err(ModelIOError::FormatMismatch {
+        if !SUPPORTED_JSON_VERSIONS.contains(&env.version) {
+            return Err(ModelIOError::VersionMismatch {
                 path: path_ref.to_path_buf(),
-                found: env.format,
-                expected: JSON_FORMAT_NAME,
+                found: env.version,
+                expected: JSON_VERSION,
             });
         }
 
@@ -1444,7 +1453,7 @@ pub(crate) fn fast_matrix_vector_product(
     fmm_tree.set_weights(weights.as_mat_ref());
 
     let target_points =
-        ferreus_rbf_utils::select_mat_rows(&fmm_tree.source_points(), &evaluation_indices);
+        ferreus_rbf_utils::select_mat_rows(fmm_tree.source_points().as_mat_ref(), &evaluation_indices);
 
     let target_values = fmm_tree
         .evaluate(weights, target_points.as_mat_ref())
@@ -1510,7 +1519,7 @@ fn duplicate_cutoff_distance(h_ref: f64, interpolant_settings: &InterpolantSetti
 /// the kernel and can cause rank-deficiency, stalled convergence, or solver
 /// breakdown.  
 ///
-/// A KD-tree with infinity-norm distance is used to group points within the
+/// An R-tree with infinity-norm distance is used to group points within the
 /// cutoff radius; only the first point in each group is kept.
 ///
 /// Returns: indices of unique points to keep.
@@ -1530,21 +1539,26 @@ fn remove_duplicates(
 
     let scaled_tolerance = duplicate_cutoff_distance(max_length, &interpolant_settings);
 
-    let kdtree = KDTree::new(points);
+    let point_indices: Vec<usize> = (0..points.nrows()).collect();
+
+    let rtree = crate::rtree::build_nd_point_rtree(
+        dims,
+        points,
+        &point_indices,
+    );
 
     let mut visited = HashSet::new();
     let mut unique_points = Vec::new();
 
     for (i, point) in points.row_iter().enumerate() {
-        if visited.contains(&(i as i32)) {
+        if visited.contains(&i) {
             continue;
         }
 
-        let target = PointRowWithId::new(&point, &-1);
-        let neighbours =
-            kdtree.radius_search(&target, scaled_tolerance, DistanceMetric::InfinityNorm);
+        let target: Vec<f64> = point.iter().copied().collect();
+        let neighbours = rtree.within_distance_inf(&target, scaled_tolerance);
 
-        if !visited.contains(&(i as i32)) {
+        if !visited.contains(&i) {
             unique_points.push(i);
             visited.extend(neighbours);
         }
@@ -1554,7 +1568,8 @@ fn remove_duplicates(
 }
 
 const JSON_FORMAT_NAME: &str = "ferreus_rbf.json";
-const JSON_VERSION: u32 = 1;
+const JSON_VERSION: u32 = 2;
+const SUPPORTED_JSON_VERSIONS: &[u32] = &[1, 2];
 
 /// Borrowing envelope for SAVE (no clone of the model).
 #[derive(Serialize)]

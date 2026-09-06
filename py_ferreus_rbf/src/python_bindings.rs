@@ -214,18 +214,18 @@ pub struct DDMParams {
 #[pymethods]
 impl DDMParams {
     #[new]
-    #[pyo3(signature=(leaf_threshold, overlap_quota, coarse_ratio, coarse_threshold))]
+    #[pyo3(signature=(leaf_threshold, overlap_knn, coarse_reduction_factor, coarse_threshold))]
     fn new(
         leaf_threshold: usize,
-        overlap_quota: f64,
-        coarse_ratio: f64,
+        overlap_knn: usize,
+        coarse_reduction_factor: usize,
         coarse_threshold: usize,
     ) -> PyResult<Self> {
         Ok(Self {
             inner: config::DDMParams {
                 leaf_threshold,
-                overlap_quota,
-                coarse_ratio,
+                overlap_knn,
+                coarse_reduction_factor,
                 coarse_threshold,
             },
         })

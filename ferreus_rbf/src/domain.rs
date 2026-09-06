@@ -73,14 +73,6 @@ impl DomainSolver {
             DomainSolver::Lblt(s) => s.solve(rhs),
         }
     }
-
-    // /// Optional: expose which factorization you ended up using.
-    // pub fn kind(&self) -> &'static str {
-    //     match self {
-    //         DomainSolver::Llt(_) => "llt",
-    //         DomainSolver::Lblt(_) => "lblt",
-    //     }
-    // }
 }
 
 /// Represents a single domain in the domain decomposition method (DDM).
@@ -152,14 +144,14 @@ impl Domain {
     /// for a 2D system.
     pub fn factorise(
         &mut self,
-        source_points: &Mat<f64>,
+        source_points: MatRef<f64>,
         interpolant_settings: Arc<InterpolantSettings>,
         solve_for_poly: bool,
         global_trend: &Option<GlobalTrendTransform>,
     ) {
         let mut lhs: Mat<f64>;
         let domain_points =
-            ferreus_rbf_utils::select_mat_rows(&source_points, &self.overlapping_point_indices);
+            ferreus_rbf_utils::select_mat_rows(source_points, &self.overlapping_point_indices);
 
         if interpolant_settings.basis_size != 0 {
             // Scale the domain points to the [-1, 1]^d hypercube for monomial evaluation.
@@ -224,7 +216,7 @@ impl Domain {
 
             // Extract the special point monomials.
             let special_point_monomials =
-                ferreus_rbf_utils::select_mat_rows(&full_rank_monomials, &special_point_indices);
+                ferreus_rbf_utils::select_mat_rows(full_rank_monomials.as_ref(), &special_point_indices);
 
             // Reorder overlapping point indices so special points come first.
             let special_points_set: HashSet<usize> =
@@ -242,7 +234,7 @@ impl Domain {
                 .collect();
 
             let non_special_point_monomials = ferreus_rbf_utils::select_mat_rows(
-                &full_rank_monomials,
+                full_rank_monomials.as_ref(),
                 &non_special_point_indices,
             );
 
@@ -630,7 +622,7 @@ mod tests {
             vec![true; naive_domain.overlapping_point_indices.len()];
 
         naive_domain.factorise(
-            &points,
+            points.as_ref(),
             interpolant_settings.clone(),
             interpolant_settings.basis_size != 0,
             &None,

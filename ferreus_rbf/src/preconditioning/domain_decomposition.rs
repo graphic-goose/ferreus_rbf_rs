@@ -26,14 +26,14 @@
 //!     In: Lirkov, I., Margenov, S. (eds) Large-Scale Scientific Computing. LSSC 2017.
 
 use rayon::prelude::*;
-use std::{collections::VecDeque, sync::Arc};
+use std::{collections::{HashMap, VecDeque}, sync::Arc};
 
 use crate::{
     common, config::DDMParams, domain::Domain, global_trend::GlobalTrendTransform,
     interpolant_config::InterpolantSettings, rtree,
 };
 
-use faer::{Mat, RowRef};
+use faer::{Mat, MatRef, RowRef};
 use ferreus_rbf_utils;
 
 /// A single level in the DDM.
@@ -65,7 +65,7 @@ pub struct DDMTree {
 impl DDMTree {
     /// Builds a DDM hierarchy over `points`.
     pub fn new(
-        points: &Mat<f64>,
+        points: MatRef<f64>,
         interpolant_settings: &Arc<InterpolantSettings>,
         ddm_params: DDMParams,
         global_trend: &Option<GlobalTrendTransform>,
@@ -78,12 +78,18 @@ impl DDMTree {
 
         let mut active_point_indices: Vec<usize> = (0..num_points).into_iter().collect();
 
+        let num_levels = get_num_levels(
+            active_point_indices.len(),
+            ddm_params.coarse_threshold,
+            ddm_params.coarse_reduction_factor,
+        );
+
         while active_point_indices.len() > ddm_params.coarse_threshold {
             let mut root = Domain::new(active_point_indices.clone());
             root.internal_points_mask = vec![true; active_point_indices.len()];
 
             let overlapping_points =
-                ferreus_rbf_utils::select_mat_rows(&points, &root.overlapping_point_indices);
+                ferreus_rbf_utils::select_mat_rows(points, &root.overlapping_point_indices);
 
             root.extents = ferreus_rbf_utils::get_pointarray_extents(overlapping_points.as_ref());
 
@@ -93,13 +99,14 @@ impl DDMTree {
 
             let mut fine_level = Level::new(&active_point_indices);
             let mut level_course_points: Vec<usize> = Vec::new();
+            let mut owner_map: HashMap<usize, usize> = HashMap::new();
 
             while active_domains.len() > 0 {
                 let current_domain = active_domains.pop_front().unwrap();
                 let current_indices = &current_domain.overlapping_point_indices;
                 let num_domain_points = current_indices.len();
 
-                let current_points = ferreus_rbf_utils::select_mat_rows(&points, &current_indices);
+                let current_points = ferreus_rbf_utils::select_mat_rows(points, &current_indices);
                 let current_points_extents =
                     ferreus_rbf_utils::get_pointarray_extents(current_points.as_ref());
 
@@ -145,9 +152,9 @@ impl DDMTree {
 
                 let mut new_domains = vec![left_domain, right_domain];
 
-                // If splitting would still produce leaves above the threshold once overlap is
-                // added, keep splitting; otherwise, accept as leaves.
-                if (num_domain_points as f64 + num_domain_points as f64 * ddm_params.overlap_quota)
+                // If splitting would still produce leaves above the threshold, keep splitting;
+                // otherwise, accept as leaves.
+                if num_domain_points as f64
                     >= 2.0 * ddm_params.leaf_threshold as f64
                 {
                     active_domains.extend(new_domains);
@@ -157,25 +164,86 @@ impl DDMTree {
                             vec![true; domain.overlapping_point_indices.len()];
                     });
 
+                    for (didx, domain) in new_domains.iter().enumerate() {
+                        for index in &domain.overlapping_point_indices {
+                            owner_map.insert(*index, didx + fine_level.leaf_domains.len());
+                        }
+                    }
+
                     fine_level.leaf_domains.extend(new_domains);
                 }
             }
 
-            // Number of coarse points per leaf promoted to the next level’s active set.
-            let num_coarse_points = ((active_point_indices.len() as f64 * ddm_params.coarse_ratio)
-                .ceil()
-                / fine_level.leaf_domains.len() as f64)
-                .ceil() as usize;
+            // Calculate the exact number of coarse points required for the next level.
+            let remaining_hierarchy_reductions = num_levels
+                .saturating_sub(levels.len())
+                .max(1);
 
-            // Build an R-tree over leaf AABBs to find neighbors quickly for overlap selection.
-            let rtree = rtree::build_nd_rtree_from_extents(
-                dimensions,
-                fine_level
-                    .leaf_domains
-                    .iter()
-                    .enumerate()
-                    .map(|(idx, dom)| (idx, dom.extents.as_slice())),
+            let num_level_coarse_points = get_num_level_coarse_points(
+                active_point_indices.len(),
+                ddm_params.coarse_threshold,
+                remaining_hierarchy_reductions,
             );
+
+            // Distribute the global coarse-point count between the leaf domains.
+            let domain_internal_sizes: Vec<usize> = fine_level
+                .leaf_domains
+                .iter()
+                .map(|domain| domain.overlapping_point_indices.len())
+                .collect();
+
+            let domain_coarse_quotas =
+                get_domain_coarse_quotas(&domain_internal_sizes, num_level_coarse_points);
+
+            // Build an R-tree over all points in the level for nearest neighbour queries.
+            let rtree = rtree::build_nd_point_rtree(
+                dimensions,
+                points,
+                &active_point_indices
+            );
+
+            // Find symmetric cross-domain k-nearest-neighbour endpoints.
+            let mut overlap_endpoints: Vec<(usize, usize)> = active_point_indices
+                .par_iter()
+                .flat_map_iter(|source_index| {
+                    let mut local_endpoints = Vec::new();
+
+                    let source_owner = *owner_map.get(source_index).unwrap();
+                    let coordinates: Vec<f64> =
+                        points.row(*source_index).iter().copied().collect();
+
+                    for (target_index, _) in
+                        rtree.nearest(&coordinates, ddm_params.overlap_knn + 1)
+                    {
+                        if target_index == *source_index {
+                            continue;
+                        }
+
+                        let target_owner = *owner_map.get(&target_index).unwrap();
+
+                        if target_owner == source_owner {
+                            continue;
+                        }
+
+                        // Add both endpoints so every cross-domain relationship is symmetric.
+                        local_endpoints.push((source_owner, target_index));
+                        local_endpoints.push((target_owner, *source_index));
+                    }
+
+                    local_endpoints
+                })
+                .collect();
+
+            // Sorting by domain and then global point index makes the overlap deterministic.
+            overlap_endpoints.par_sort_unstable();
+            overlap_endpoints.dedup();
+
+            let mut domain_overlap_indices =
+                vec![Vec::new(); fine_level.leaf_domains.len()];
+
+            for (domain_index, point_index) in overlap_endpoints {
+                domain_overlap_indices[domain_index].push(point_index);
+            }
 
             // For each leaf select its coarse points and add overlap from neighbours.
             for i in 0..fine_level.leaf_domains.len() {
@@ -189,11 +257,13 @@ impl DDMTree {
                 let num_domain_internal_points = internal_indices.len();
 
                 let internal_points =
-                    ferreus_rbf_utils::select_mat_rows(&points, &internal_indices);
+                    ferreus_rbf_utils::select_mat_rows(points, &internal_indices);
 
-                let sample_size = num_domain_internal_points.min(num_coarse_points);
+                let sample_size = num_domain_internal_points.min(domain_coarse_quotas[i]);
 
-                let mut coarse_indices = {
+                let mut coarse_indices = if sample_size == 0 {
+                    Vec::new()
+                } else {
                     let selected_indices = {
                         // Approach here is to get the closest point to the center of the domain,
                         // then use the Farthest Point Sampling algorithm to get points furthest
@@ -233,75 +303,14 @@ impl DDMTree {
 
                 level_course_points.extend(coarse_indices);
 
-                // Get 'overlapping' points from neighbour internal points, rank by
-                // point-to-box distance, and take the closest `num_overlap_points`.
-                let neighbours =
-                    rtree.find_neighbours(&fine_level.leaf_domains[i].extents.as_slice(), i);
-
-                let num_neighbours = neighbours.len();
-
-                let num_overlap_points =
-                    ((fine_level.leaf_domains[i].overlapping_point_indices.len() * 2) as f64
-                        * ddm_params.overlap_quota)
-                        .ceil();
-
-                let mut neighbour_indices: Vec<usize> = Vec::new();
-
-                for j in 0..num_neighbours {
-                    let neighbour_internal_indices: Vec<usize> = fine_level.leaf_domains
-                        [neighbours[j]]
-                        .overlapping_point_indices
-                        .iter()
-                        .zip(
-                            fine_level.leaf_domains[neighbours[j]]
-                                .internal_points_mask
-                                .iter(),
-                        )
-                        .filter_map(|(&index, &mask)| if mask { Some(index) } else { None })
-                        .collect();
-
-                    neighbour_indices.extend(neighbour_internal_indices);
-                }
-
-                let box_min = &fine_level.leaf_domains[i].extents[..dimensions];
-                let box_max = &fine_level.leaf_domains[i].extents[dimensions..];
-
-                let distances: Vec<f64> = neighbour_indices
-                    .iter()
-                    .map(|idx| {
-                        let point = points.row(*idx);
-                        let clipped_point: Vec<f64> = point
-                            .iter()
-                            .enumerate()
-                            .map(|(pidx, elem)| {
-                                let min_test = elem.min(box_max[pidx]);
-                                let max_test = min_test.max(box_min[pidx]);
-                                max_test
-                            })
-                            .collect();
-
-                        ferreus_rbf_utils::get_distance(
-                            point,
-                            RowRef::from_slice(clipped_point.as_slice()),
-                        )
-                    })
-                    .collect();
-
-                let sorted_distance_indices = ferreus_rbf_utils::argsort(&distances);
-                let truncated_indices: Vec<usize> = sorted_distance_indices
-                    [..(num_overlap_points as usize).min(sorted_distance_indices.len())]
-                    .to_vec();
-
-                let new_indices: Vec<usize> = truncated_indices
-                    .iter()
-                    .map(|idx| neighbour_indices[*idx])
-                    .collect();
+                let new_indices = &domain_overlap_indices[i];
+                let num_overlap_points = new_indices.len();
 
                 // Extend this leaf's overlapping set with the neighbour points and mark them as
                 // non-internal.
                 fine_level.leaf_domains[i]
                     .overlapping_point_indices
-                    .extend(new_indices);
+                    .extend(new_indices.iter().copied());
 
                 fine_level.leaf_domains[i].internal_points_mask.extend(vec![
                     false;
@@ -318,6 +327,12 @@ impl DDMTree {
             levels.push(fine_level);
 
             level_course_points.sort();
+            level_course_points.dedup();
+
+            assert_eq!(
+                level_course_points.len(),
+                num_level_coarse_points
+            );
 
             // The per-leaf coarse selections become the next level’s active set.
             active_point_indices = level_course_points;
@@ -358,6 +373,134 @@ fn get_centroid(points: &Mat<f64>) -> Vec<f64> {
         .collect()
 }
 
+/// Calculates the number of level reductions required to reach the
+/// direct coarse problem.
+fn get_num_levels(
+    num_points: usize,
+    coarse_threshold: usize,
+    coarse_reduction_factor: usize,
+) -> usize {
+    assert!(coarse_threshold > 0);
+
+    if num_points <= coarse_threshold {
+        return 0;
+    }
+
+    let mut covered_points = coarse_threshold;
+    let mut num_levels = 0;
+
+    while covered_points < num_points {
+        covered_points = covered_points
+            .saturating_mul(coarse_reduction_factor);
+
+        num_levels += 1;
+    }
+
+    num_levels
+}
+
+/// Calculates the number of points required at the next coarser level.
+fn get_num_level_coarse_points(
+    num_active_points: usize,
+    coarse_threshold: usize,
+    remaining_hierarchy_reductions: usize,
+) -> usize {
+    let coarse_ratio =
+        (coarse_threshold as f64 / num_active_points as f64)
+            .powf(1.0 / remaining_hierarchy_reductions as f64);
+
+    ((num_active_points as f64 * coarse_ratio).ceil() as usize)
+        .clamp(1, num_active_points - 1)
+}
+
+/// Distributes an exact coarse-point count between domains in proportion
+/// to their internal point counts.
+fn get_domain_coarse_quotas(
+    domain_sizes: &[usize],
+    num_coarse_points: usize,
+) -> Vec<usize> {
+    let total_points = domain_sizes.iter().sum::<usize>();
+    let num_coarse_points = num_coarse_points.min(total_points);
+
+    if num_coarse_points == 0 {
+        return vec![0; domain_sizes.len()];
+    }
+
+    let num_nonempty_domains = domain_sizes
+        .iter()
+        .filter(|&&size| size > 0)
+        .count();
+
+    let reserve_one_per_domain =
+        num_coarse_points >= num_nonempty_domains;
+
+    // Give each nonempty domain one coverage point when the global
+    // coarse-point budget permits it.
+    let mut domain_quotas: Vec<usize> = domain_sizes
+        .iter()
+        .map(|&size| {
+            usize::from(reserve_one_per_domain && size > 0)
+        })
+        .collect();
+
+    let num_reserved_points = domain_quotas.iter().sum::<usize>();
+    let num_remaining_points =
+        num_coarse_points - num_reserved_points;
+
+    if num_remaining_points == 0 {
+        return domain_quotas;
+    }
+
+    let total_remaining_capacity =
+        total_points - num_reserved_points;
+
+    let mut remainders =
+        Vec::with_capacity(domain_sizes.len());
+
+    // Allocate the remaining budget in proportion to the capacity
+    // remaining in each domain.
+    for (domain_index, (&domain_size, quota)) in domain_sizes
+        .iter()
+        .zip(&mut domain_quotas)
+        .enumerate()
+    {
+        let capacity = domain_size - *quota;
+        let numerator =
+            num_remaining_points.saturating_mul(capacity);
+
+        *quota += numerator / total_remaining_capacity;
+
+        remainders.push((
+            numerator % total_remaining_capacity,
+            domain_index,
+        ));
+    }
+
+    // Assign the points lost through integer division to the domains
+    // with the largest fractional remainders.
+    remainders.sort_unstable_by(|a, b| {
+        b.0.cmp(&a.0)
+            .then_with(|| a.1.cmp(&b.1))
+    });
+
+    let num_unassigned_points =
+        num_coarse_points - domain_quotas.iter().sum::<usize>();
+
+    for &(_, domain_index) in remainders
+        .iter()
+        .take(num_unassigned_points)
+    {
+        domain_quotas[domain_index] += 1;
+    }
+
+    assert_eq!(
+        domain_quotas.iter().sum::<usize>(),
+        num_coarse_points
+    );
+
+    domain_quotas
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -376,18 +519,27 @@ mod tests {
         Mat::from_fn(n, d, |_, _| rng.random_range(0.0..1.0))
     }
 
+    #[test]
+    fn hierarchy_reductions_use_configured_factor() {
+        assert_eq!(get_num_levels(4_096, 4_096, 128), 0);
+        assert_eq!(get_num_levels(524_288, 4_096, 128), 1);
+        assert_eq!(get_num_levels(524_289, 4_096, 128), 2);
+        assert_eq!(get_num_levels(32_768, 4_096, 8), 1);
+        assert_eq!(get_num_levels(32_769, 4_096, 8), 2);
+    }
+
     fn run_union_test(dim: usize) {
         let params = DDMParams {
             leaf_threshold: 5,
-            overlap_quota: 0.5,
-            coarse_ratio: 0.50,
+            overlap_knn: 2,
+            coarse_reduction_factor: 128,
             coarse_threshold: 10,
         };
         let interpolant_settings = generate_interpolant_settings();
 
         let n = 100;
         let points = generate_points(n, dim);
-        let ddm = DDMTree::new(&points, &interpolant_settings, params, &None);
+        let ddm = DDMTree::new(points.as_ref(), &interpolant_settings, params, &None);
 
         for (lvl_idx, level) in ddm.levels.iter().enumerate() {
             let mut union_internal: Vec<usize> = level
@@ -427,13 +579,13 @@ mod tests {
     fn run_disjointness_test(dim: usize) {
         let params = DDMParams {
             leaf_threshold: 8,
-            overlap_quota: 0.25,
-            coarse_ratio: 0.3,
+            overlap_knn: 2,
+            coarse_reduction_factor: 128,
             coarse_threshold: 12,
         };
         let interpolant_settings = generate_interpolant_settings();
         let points = generate_points(96, dim);
-        let ddm = DDMTree::new(&points, &interpolant_settings, params, &None);
+        let ddm = DDMTree::new(points.as_ref(), &interpolant_settings, params, &None);
 
         for (lvl_idx, level) in ddm.levels.iter().enumerate() {
             let mut seen = HashSet::<usize>::new();
@@ -466,19 +618,19 @@ mod tests {
     fn run_overlap_bound_test(dim: usize) {
         let params = DDMParams {
             leaf_threshold: 9,
-            overlap_quota: 0.25,
-            coarse_ratio: 0.3,
+            overlap_knn: 2,
+            coarse_reduction_factor: 128,
             coarse_threshold: 14,
         };
         let interpolant_settings = generate_interpolant_settings();
         let points = generate_points(80, dim);
-        let ddm = DDMTree::new(&points, &interpolant_settings, params.clone(), &None);
+        let ddm = DDMTree::new(points.as_ref(), &interpolant_settings, params.clone(), &None);
 
         if let Some(lvl0) = ddm.levels.first() {
             for dom in &lvl0.leaf_domains {
                 let internal = dom.internal_points_mask.iter().filter(|&&b| b).count();
                 let overlap = dom.internal_points_mask.len() - internal;
-                let bound = ((2.0 * internal as f64) * params.overlap_quota).ceil() as usize;
+                let bound = internal * params.overlap_knn;
 
                 assert!(
                     overlap <= bound,
@@ -511,13 +663,13 @@ mod tests {
     fn run_monotone_levels_and_coarse_test(dim: usize) {
         let params = DDMParams {
             leaf_threshold: 8,
-            overlap_quota: 0.2,
-            coarse_ratio: 0.25,
+            overlap_knn: 2,
+            coarse_reduction_factor: 128,
             coarse_threshold: 16,
         };
         let interpolant_settings = generate_interpolant_settings();
         let points = generate_points(96, dim);
-        let ddm = DDMTree::new(&points, &interpolant_settings, params, &None);
+        let ddm = DDMTree::new(points.as_ref(), &interpolant_settings, params, &None);
 
         // active set shrinks and is subset of previous
         for w in ddm.levels.windows(2) {
@@ -582,11 +734,11 @@ mod tests {
         let points = generate_points(25, 2);
         let params = DDMParams {
             leaf_threshold: 8,
-            overlap_quota: 0.2,
-            coarse_ratio: 0.5,
+            overlap_knn: 2,
+            coarse_reduction_factor: 128,
             coarse_threshold: 25, // >= npoints -> no fine levels
         };
-        let ddm = DDMTree::new(&points, &interpolant_settings, params, &None);
+        let ddm = DDMTree::new(points.as_ref(), &interpolant_settings, params, &None);
         assert_eq!(ddm.levels.len(), 1, "only coarse level expected");
         assert_eq!(
             ddm.levels[0].leaf_domains.len(),

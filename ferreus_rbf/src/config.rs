@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 /// the input point cloud into a hierarchy of overlapping subdomains, within which
 /// local RBF systems are solved directly and combined to form a global preconditioner.
 ///
-/// This struct defines the key thresholds and ratios governing how that
+/// This struct defines the key parameters governing how that
 /// hierarchy is generated - for example, the number of points permitted per
 /// leaf domain, how much overlap occurs between neighboring subdomains, and
 /// the scale at which coarse levels are formed.
@@ -28,16 +28,16 @@ use serde::{Deserialize, Serialize};
 /// ### Intended Usage
 /// This configuration is part of the public API mainly for **developers and
 /// advanced users** who wish to experiment with or tune the decomposition
-/// process. For example, increasing subdomain overlap and coarse ratio can
-/// improve convergence, but at the cost of higher memory usage.
+/// process. For example, increasing subdomain overlap or adding hierarchy
+/// levels can improve convergence, but at the cost of additional work.
 /// In general, the default values have been selected to provide
 /// a robust trade-off between memory usage and solver performance across
 /// a wide range of problem sizes.
 ///
 /// ### Default Values
-/// - `leaf_threshold`: `1024`
-/// - `overlap_quota`: `0.5`
-/// - `coarse_ratio`: `0.125`
+/// - `leaf_threshold`: `256`
+/// - `overlap_knn`: `16`
+/// - `coarse_reduction_factor`: `128`
 /// - `coarse_threshold`: `4096`
 #[derive(Clone, Copy, Serialize, Deserialize, Debug)]
 pub struct DDMParams {
@@ -45,13 +45,12 @@ pub struct DDMParams {
     /// within a leaf domain.
     pub leaf_threshold: usize,
 
-    /// Overlap fraction. Larger fraction will add more overlapping
-    /// points to each leaf domain.
-    pub overlap_quota: f64,
+    /// Number of nearest neighbours of each internal point to query to find overlapping points.
+    pub overlap_knn: usize,
 
-    /// Fraction of **internal** points per leaf promoted to the next
-    /// coarser level.
-    pub coarse_ratio: f64,
+    /// Maximum reduction factor between consecutive levels of the domain
+    /// decomposition hierarchy.
+    pub coarse_reduction_factor: usize,
 
     /// Maximum number of points in the coarsest level.
     pub coarse_threshold: usize,
@@ -60,9 +59,9 @@ pub struct DDMParams {
 impl Default for DDMParams {
     fn default() -> Self {
         DDMParams {
-            leaf_threshold: 1024,
-            overlap_quota: 0.5,
-            coarse_ratio: 0.125,
+            leaf_threshold: 256,
+            overlap_knn: 16,
+            coarse_reduction_factor: 128,
             coarse_threshold: 4096,
         }
     }
@@ -97,9 +96,11 @@ impl From<FmmCompressionType> for M2LCompressionType {
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Params {
     /// Iterative solver to use when fitting the RBF system.
+    #[serde(skip)]
     pub solver_type: Solvers,
 
     /// Parameters controlling domain decomposition preconditioning.
+    #[serde(skip)]
     pub ddm_params: DDMParams,
 
     /// Parameters controlling the fast multipole method (FMM).
