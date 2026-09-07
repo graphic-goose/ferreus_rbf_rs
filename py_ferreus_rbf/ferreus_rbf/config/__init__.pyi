@@ -72,7 +72,7 @@ class DDMParams:
     Parameters
     ----------
     leaf_threshold : int
-        Target maximum number of points (internal + overlapping) within a leaf domain.
+        Target maximum number of internal points within a leaf domain.
     overlap_knn : int
         Number of nearest neighbours of each internal point to query to find overlapping points.
     coarse_reducation_factor : int

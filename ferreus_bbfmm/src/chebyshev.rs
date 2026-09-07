@@ -14,7 +14,8 @@ use crate::{
     utils,
 };
 use faer::{
-    ColRef, Mat, RowRef,
+    Accum, ColRef, Mat, MatMut, MatRef, Par, RowRef,
+    linalg::matmul::matmul,
     prelude::{Reborrow, ReborrowMut},
     row::generic::Row,
     unzip, zip,
@@ -141,103 +142,149 @@ fn calculate_dsn_dx(
     dsn
 }
 
-/// Calculates the Chebyshev weights to transfer from the Chebyshev nodes of a
-/// parent cell to the Chebyshev nodes of its children.
-fn get_cheb_transfer_from_parent_to_children(
+/// Calculates the one-dimensional child-to-parent M2M transfer operators.
+///
+/// The operators for the lower and upper child positions are stored as
+/// adjacent column blocks:
+///
+///     [lower | upper]
+///
+/// This allows each p × p operator to be accessed directly from the
+/// column-major Faer matrix.
+fn get_m2m_transfer_operators(
     interpolation_order: usize,
-    cheb_nodes: &Vec<f64>,
+    cheb_nodes: &[f64],
     polynomial_nodes: &Mat<f64>,
 ) -> Mat<f64> {
-    let num_child_cheb_nodes = 2 * interpolation_order as usize;
+    let num_child_nodes = 2 * interpolation_order;
 
-    // Initialise the one dimensional transfer array.
-    // So, using an interpolation order of 3 as an example in one dimension, we go from
-    // parent_cheb_nodes = [0.866, 6.12E-17, -0.866] to
-    // child_cheb_nodes = [-0.067, -0.5, -0.933, 0.933, 0.5, 0.067]
-    let child_cheb_nodes: Vec<f64> = (0..num_child_cheb_nodes)
+    // Scale the Chebyshev nodes into the lower and upper halves of the
+    // parent interval.
+    let child_nodes: Vec<f64> = (0..num_child_nodes)
         .map(|i| {
-            let child = if i < interpolation_order {
-                // Calculate the cheb nodes for the first child (left side) in one dimension.
-                cheb_nodes[i] - 1.0
+            if i < interpolation_order {
+                (cheb_nodes[i] - 1.0) * 0.5
             } else {
-                // Calculate the cheb nodes for the second child (right side) in one dimension.
-                cheb_nodes[i - interpolation_order] + 1.0
-            };
-            child * 0.5
+                (cheb_nodes[i - interpolation_order] + 1.0) * 0.5
+            }
         })
         .collect();
 
-    // Evaluate the Chebyshev polynomials at the child Chebyshev nodes.
-    let (tn_x, _) = evaluate_chebyshev_polynomials(
-        interpolation_order,
-        num_child_cheb_nodes,
-        &child_cheb_nodes,
-        false,
+    let (child_polynomials, _) =
+        evaluate_chebyshev_polynomials(interpolation_order, num_child_nodes, &child_nodes, false);
+
+    // Transposing the parent-to-child interpolation gives the
+    // child-to-parent M2M operators. Calculating the transpose directly
+    // stores the lower and upper operators as adjacent column blocks.
+    let mut operators = Mat::<f64>::zeros(interpolation_order, num_child_nodes);
+
+    let scale = 2.0 / interpolation_order as f64;
+
+    matmul(
+        &mut operators,
+        Accum::Replace,
+        polynomial_nodes,
+        child_polynomials.transpose(),
+        scale,
+        Par::Seq,
     );
 
-    // Calculate the sum of the Chebyshev polynomials.
-    calculate_sn(tn_x, &polynomial_nodes, interpolation_order)
-}
+    // Apply the constant Chebyshev interpolation correction.
+    let offset = 1.0 / interpolation_order as f64;
 
-/// Returns the relative Morton offsets in an N-dimensional hypercube.
-pub fn calculate_relative_offsets_morton(dim: &usize) -> Mat<usize> {
-    let num_children = 2usize.pow(*dim as u32);
-
-    let output = Mat::<usize>::from_fn(num_children, *dim, |i, j| match (i & (1 << j)) != 0 {
-        true => 1,
-        false => 0,
+    operators.col_iter_mut().for_each(|column| {
+        column.iter_mut().for_each(|value| *value -= offset);
     });
 
-    output
+    operators
 }
 
-/// Calculates the Chebyshev weights to transfer from the Chebyshev nodes of the
-/// children of a parent cell to the Chebyshev nodes of the parent cell.
-fn get_m2m_transfer_matrices(
+/// Applies the one-dimensional Chebyshev transfer operators along each
+/// dimension of the coefficient tensor.
+///
+/// The M2M operators are stored in their child-to-parent form. Their
+/// transposes are used for L2L.
+///
+/// Each result is stored with the next dimension contiguous, allowing the
+/// same matrix multiplication to be repeated for any number of dimensions.
+/// After the final multiplication the coefficients are back in their
+/// original order.
+///
+/// The result is returned in `scratch[0]`.
+pub(crate) fn apply_cheb_tensor_transfer(
+    input: &[f64],
+    scratch: &mut [Mat<f64>; 2],
+    transfer_operators: MatRef<'_, f64>,
+    child_index: usize,
     interpolation_order: usize,
-    cheb_nodes: &Vec<f64>,
-    polynomial_nodes: &Mat<f64>,
-    dimensions: &usize,
-    num_child_cells: &usize,
-) -> Vec<Mat<f64>> {
-    // Get the transfer weights to go from cheb nodes of parent to cheb nodes of children.
-    let sn = get_cheb_transfer_from_parent_to_children(
-        interpolation_order,
-        &cheb_nodes,
-        &polynomial_nodes,
-    );
+    dimensions: usize,
+    transpose: bool,
+) {
+    assert!(dimensions > 0);
 
-    // Split the transfer weights array in half row wise.
-    let child_transfers = sn.split_at_row(interpolation_order);
+    let num_nodes = interpolation_order.pow(dimensions as u32);
 
-    // Get an array of the unique transfer vectors for well separated cells based on Morton order.
-    let m2m_transfer_vector_array: Mat<usize> = calculate_relative_offsets_morton(&dimensions);
+    assert_eq!(input.len(), num_nodes);
+    assert_eq!(scratch[0].nrows(), num_nodes);
+    assert_eq!(scratch[1].nrows(), num_nodes);
 
-    // Loop for each child cell
-    (0..*num_child_cells)
-        .map(|i| {
-            // Tensor product of transfers in each dimension.
-            let l2l_transfer = m2m_transfer_vector_array
-                .row(i)
-                .iter()
-                .map(|&j| {
-                    if j == 0 {
-                        &child_transfers.0
-                    } else {
-                        &child_transfers.1
-                    }
-                })
-                .fold(None, |acc: Option<Mat<f64>>, mat| {
-                    Some(match acc {
-                        Some(prev) => prev.kron(mat.as_ref()),
-                        None => mat.to_owned(),
-                    })
-                })
-                .unwrap();
+    // Copy the input coefficients into the first workspace.
+    scratch[0].col_as_slice_mut(0).copy_from_slice(input);
 
-            l2l_transfer.transpose().to_owned()
-        })
-        .collect()
+    // Start with the fastest-changing dimension. Storing each result in
+    // transposed form makes the next dimension contiguous.
+    for axis in (0..dimensions).rev() {
+        let child_side = (child_index >> axis) & 1;
+
+        let operator = transfer_operators
+            .rb()
+            .subcols(child_side * interpolation_order, interpolation_order);
+
+        {
+            let (current, next) = scratch.split_at_mut(1);
+
+            // View the coefficients as a matrix with the current dimension
+            // along its rows.
+            let current = MatRef::from_column_major_slice(
+                current[0].col_as_slice(0),
+                interpolation_order,
+                num_nodes / interpolation_order,
+            );
+
+            // Store the result transposed so that the next dimension becomes
+            // contiguous in memory.
+            let next = MatMut::from_column_major_slice_mut(
+                next[0].col_as_slice_mut(0),
+                num_nodes / interpolation_order,
+                interpolation_order,
+            );
+
+            if transpose {
+                // Apply the transposed operator for L2L.
+                matmul(
+                    next,
+                    Accum::Replace,
+                    current.transpose(),
+                    operator,
+                    1.0,
+                    Par::Seq,
+                );
+            } else {
+                // Apply the child-to-parent operator for M2M.
+                matmul(
+                    next,
+                    Accum::Replace,
+                    current.transpose(),
+                    operator.transpose(),
+                    1.0,
+                    Par::Seq,
+                );
+            }
+        }
+
+        // Use this result as the input to the next dimension.
+        scratch.swap(0, 1);
+    }
 }
 
 /// Generates all possible M2L vectors in [-3,3]^d and a set of unique reference vectors from which
@@ -656,7 +703,7 @@ pub fn precompute_approximation_operators<K: KernelFunction + Send + Sync>(
     compression_type: &M2LCompressionType,
     epsilon: f64,
 ) -> PrecomputeOperators {
-    let num_child_cells = (2 as usize).pow(dimensions as u32);
+    // let num_child_cells = (2 as usize).pow(dimensions as u32);
     let num_nodes_nd = interpolation_order.pow(dimensions as u32);
 
     // Generate the one dimensional Chebyshev nodes.
@@ -669,14 +716,9 @@ pub fn precompute_approximation_operators<K: KernelFunction + Send + Sync>(
     let (polynomial_nodes, _) =
         evaluate_chebyshev_polynomials(interpolation_order, interpolation_order, &nodes, false);
 
-    // Get the matrices of multipole to multipole transfer coefficients (Chebyshev weights).
-    let m2m_transfer_matrices = get_m2m_transfer_matrices(
-        interpolation_order,
-        &nodes,
-        &polynomial_nodes,
-        &dimensions,
-        &num_child_cells,
-    );
+    // Get the one-dimensional child-to-parent M2M transfer operators.
+    let m2m_transfer_operators =
+        get_m2m_transfer_operators(interpolation_order, &nodes, &polynomial_nodes);
 
     // Get an array of all possible M2L transfer vectors and
     // the M2L vectors for the reference domain.
@@ -803,7 +845,7 @@ pub fn precompute_approximation_operators<K: KernelFunction + Send + Sync>(
         num_nodes_nd,
         nodes_nd,
         polynomial_nodes,
-        m2m_transfer_matrices,
+        m2m_transfer_operators,
         u: truncated_u,
         vt: truncated_vt,
         permutation_indices,

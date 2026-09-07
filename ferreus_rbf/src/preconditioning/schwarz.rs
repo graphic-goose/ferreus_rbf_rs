@@ -46,16 +46,23 @@ where
     let coarse_level_indices = ddm_tree.levels[coarse_idx].point_indices.clone();
 
     if coarse_idx > 0 {
+        let mut first_fine_level = true;
         // Iterate from the finest level to the second coarsest level.
-        for i in (0..coarse_idx).into_iter() {
-            let level_point_indices = &ddm_tree.levels[i].point_indices;
+        for i in 0..coarse_idx {
+            let residuals = match first_fine_level {
+                true => {
+                    first_fine_level = false;
+                    rg.to_owned()
+                }
+                false => rg - matvec(sl.as_ref(), Some(&ddm_tree.levels[i].point_indices)),
+            };
 
             sl += solve_fine_level(
-                rg - matvec(sl.as_ref(), Some(level_point_indices)),
+                residuals,
                 ddm_tree,
                 &i,
-                &interpolant_settings,
-                &ortho_poly_matrix,
+                interpolant_settings,
+                ortho_poly_matrix,
             );
 
             // Use the coarse level as a smoother, but only return the poly 'tail'

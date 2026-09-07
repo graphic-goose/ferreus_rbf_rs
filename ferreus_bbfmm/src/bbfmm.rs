@@ -162,8 +162,11 @@ pub struct PrecomputeOperators {
     /// Subset of nodes used for polynomial projection and evaluation.
     pub polynomial_nodes: Mat<f64>,
 
-    /// Transfer matrices for M2M translations across levels.
-    pub m2m_transfer_matrices: Vec<Mat<f64>>,
+    /// One-dimensional child-to-parent M2M transfer operators.
+    ///
+    /// The lower and upper child operators are stored as adjacent p × p
+    /// column blocks in a p × 2p matrix: [lower | upper]
+    pub m2m_transfer_operators: Mat<f64>,
 
     /// Left factors from SVD compression of M2L interaction matrices, indexed by level and source/target offsets.
     pub u: HashMap<usize, HashMap<usize, Mat<f64>>>,
@@ -318,7 +321,7 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
             num_nodes_nd: usize::default(),
             nodes_nd: Mat::new(),
             polynomial_nodes: Mat::new(),
-            m2m_transfer_matrices: Vec::default(),
+            m2m_transfer_operators: Mat::new(),
             u: HashMap::default(),
             vt: HashMap::default(),
             permutation_indices: Vec::default(),
@@ -742,6 +745,15 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
     /// Propogates the multipole expansions from children into their parent
     fn multipole_to_multipole(&self, parent: &u64, multipole_coefficients_ref: &Mat<f64>) {
         let parent_children = self.tree_lists.children.get(&parent).unwrap();
+        let num_nodes = self.precompute_operators.num_nodes_nd;
+        let dimensions = self.dimensions as usize;
+
+        // Reuse the same tensor-product scratch space for every child and
+        // right-hand side handled by this parent.
+        let mut scratch = [
+            Mat::<f64>::zeros(num_nodes, 1),
+            Mat::<f64>::zeros(num_nodes, 1),
+        ];
 
         for j in 0..self.nrhs {
             let parent_column_index = self.tree_lists.key_to_index_map.get(&parent).unwrap()
@@ -758,9 +770,17 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
 
                     let child_index = morton::get_child_index(&child_key, &self.dimensions);
 
-                    let child_coefficients = &self.precompute_operators.m2m_transfer_matrices
-                        [child_index]
-                        * multipole_coefficients_ref.col(child_column_index);
+                    chebyshev::apply_cheb_tensor_transfer(
+                        multipole_coefficients_ref.col_as_slice(child_column_index),
+                        &mut scratch,
+                        self.precompute_operators.m2m_transfer_operators.as_ref(),
+                        child_index,
+                        self.interpolation_order,
+                        dimensions,
+                        false,
+                    );
+
+                    let child_coefficients = scratch[0].col_as_slice(0);
 
                     (0..self.precompute_operators.num_nodes_nd)
                         .into_iter()
@@ -1048,7 +1068,7 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
         });
     }
 
-    /// Propogates the local coefficients from the parent cell to its children
+    /// Propogates the local coefficients from the parent cell to its children.
     fn local_to_local(
         &self,
         children: &Vec<u64>,
@@ -1056,34 +1076,50 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
         cell_column_index: &usize,
         cells_with_targets: &HashSet<u64>,
     ) {
-        children.iter().for_each(|child_key| {
-            if cells_with_targets.contains(&child_key) {
+        let num_nodes = self.precompute_operators.num_nodes_nd;
+        let dimensions = self.dimensions as usize;
+
+        // Reuse the same tensor-product workspace for every relevant child
+        // and right-hand side handled by this parent.
+        let mut workspace = [
+            Mat::<f64>::zeros(num_nodes, 1),
+            Mat::<f64>::zeros(num_nodes, 1),
+        ];
+
+        for child_key in children {
+            if cells_with_targets.contains(child_key) {
                 for j in 0..self.nrhs {
-                    let parent_coefficients = self
-                        .local_coefficients
-                        .col(*cell_column_index + j * self.tree_lists.tree.len());
+                    let parent_column_index = *cell_column_index + j * self.tree_lists.tree.len();
 
                     let child_column_index =
-                        self.tree_lists.key_to_index_map.get(&child_key).unwrap()
+                        self.tree_lists.key_to_index_map.get(child_key).unwrap()
                             + j * self.tree_lists.tree.len();
-                    let child_index = morton::get_child_index(&child_key, &self.dimensions);
-                    let child_coefficients =
-                        &self.precompute_operators.m2m_transfer_matrices[child_index].transpose()
-                            * &parent_coefficients;
+
+                    let child_index = morton::get_child_index(child_key, &self.dimensions);
+
+                    chebyshev::apply_cheb_tensor_transfer(
+                        local_coefficients_ref.col_as_slice(parent_column_index),
+                        &mut workspace,
+                        self.precompute_operators.m2m_transfer_operators.as_ref(),
+                        child_index,
+                        self.interpolation_order,
+                        dimensions,
+                        true,
+                    );
+
+                    let child_coefficients = workspace[0].col_as_slice(0);
 
                     unsafe {
                         let child_ptr =
                             local_coefficients_ref.col(child_column_index).as_ptr() as *mut f64;
 
-                        (0..self.precompute_operators.num_nodes_nd)
-                            .into_iter()
-                            .for_each(|idx| {
-                                *child_ptr.add(idx) += child_coefficients[idx];
-                            });
+                        for index in 0..num_nodes {
+                            *child_ptr.add(index) += child_coefficients[index];
+                        }
                     }
                 }
             }
-        });
+        }
     }
 
     /// Parallel loop through all leaf cells to evaluate targets.
