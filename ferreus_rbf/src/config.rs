@@ -222,6 +222,12 @@ pub struct FmmParams {
 
     /// Number of target points to evaluate in each chunk.
     pub eval_chunk_size: usize,
+
+    /// Whether target-evaluation trees use adaptive subdivision. Uniform (`false`)
+    /// is typically faster for dense uniformly distributed target points, but comes 
+    /// at a higher memory cost. 
+    /// Does not affect the solve phase, which always uses an adaptive tree.
+    pub eval_adaptive: bool,
 }
 
 impl From<FmmParams> for ferreus_bbfmm::FmmParams {
@@ -246,6 +252,7 @@ impl FmmParams {
             compression_type: FmmCompressionType::ACA,
             epsilon: 10f64.powi(-(default_interpolation_order as i32)),
             eval_chunk_size: 1024,
+            eval_adaptive: true,
         }
     }
 }

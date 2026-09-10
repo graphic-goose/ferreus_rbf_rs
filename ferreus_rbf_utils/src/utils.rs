@@ -437,6 +437,15 @@ macro_rules! for_each_kernel {
                 }
             }
 
+            /// Releases the state only the upward and downward passes read, leaving the tree
+            /// usable for leaf evaluation passes alone.
+            #[inline]
+            pub fn release_upward_state(&mut self) {
+                match self {
+                    $( Self::$V(t) => t.release_upward_state(), )*
+                }
+            }
+
             /// Evaluates the FMM at the supplied target points.
             #[inline]
             pub fn evaluate(

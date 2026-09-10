@@ -385,6 +385,8 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
     /// * `weights`: Matrix of shape (N, K), where N is the number of source points and K is the number of right-hand sides
     ///              to evaluate, containing source point weights (values)
     pub fn set_weights(&mut self, weights: MatRef<f64>) {
+        self.assert_upward_state_retained("set_weights");
+
         self.nrhs = weights.ncols();
         self.reset_multipole_coefficients();
 
@@ -450,6 +452,8 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
         weights: MatRef<f64>,
         target_points: MatRef<f64>,
     ) -> Result<(Mat<f64>, Option<Mat<f64>>), FmmError> {
+        self.assert_upward_state_retained("evaluate");
+
         self.reset_local_coefficients();
 
         let ntarget_points = target_points.shape().0;
@@ -520,11 +524,35 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
     /// # Returns
     /// * `target_values` : Matrix of shape (M, K), where M is the number of target points and K is the number of right-hand sides evaluated.
     pub fn set_local_coefficients(&mut self, weights: MatRef<f64>) {
+        self.assert_upward_state_retained("set_local_coefficients");
+
         self.reset_local_coefficients();
 
         let full_tree_set: HashSet<u64> = self.tree_lists.tree.iter().cloned().collect();
 
         self.downward_pass(&weights, &full_tree_set);
+    }
+
+    /// Releases the tree state that is only read by the upward and downward passes, keeping just
+    /// what [`FmmTree::evaluate_leaves`] and [`FmmTree::evaluate_leaves_with_gradients`] need.
+    pub fn release_upward_state(&mut self) {
+        if !self.adaptive_tree {
+            self.multipole_coefficients = Mat::<f64>::new();
+        }
+
+        self.tree_lists.v_lists = HashMap::default();
+        self.tree_lists.x_lists = None;
+        self.tree_lists.children = HashMap::default();
+        self.tree_lists.level_cells_map = HashMap::default();
+    }
+
+    /// Panics if [`FmmTree::release_upward_state`] has already run.
+    fn assert_upward_state_retained(&self, method: &str) {
+        assert!(
+            !self.tree_lists.level_cells_map.is_empty(),
+            "`{method}` is unavailable after `release_upward_state`; the tree only supports leaf \
+             evaluation passes"
+        );
     }
 
     /// Performs a leaf evaluation pass to calculate the values at the target locations. Intended to be
@@ -1154,9 +1182,18 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
         target_values_ref: MatRef<f64>,
         target_gradients_ref: Option<MatRef<f64>>,
     ) {
-        self.tree_lists
+        // Chunk evaluate per leaf
+        let chunk_size = self.eval_chunk_size.max(1);
+        let work_items: Vec<(&u64, &[usize])> = self
+            .tree_lists
             .leaf_target_indices
-            .par_iter()
+            .iter()
+            .flat_map(|(leaf, indices)| {
+                indices.chunks(chunk_size).map(move |chunk| (leaf, chunk))
+            })
+            .collect();
+        work_items
+            .into_par_iter()
             .for_each(|(leaf, leaf_target_indices)| {
                 if let Some(u_list) = self.tree_lists.u_lists.get(leaf) {
                     if !u_list.is_empty() {
@@ -1480,7 +1517,7 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
 #[cfg(test)]
 mod tests {
     use super::{FmmError, FmmTree, KernelFunction};
-    use faer::{RowRef, mat};
+    use faer::{RowRef, mat, Mat};
     use std::sync::Arc;
 
     struct TestKernel;
@@ -1535,5 +1572,86 @@ mod tests {
             }
             other => panic!("Expected PointOutsideTree error, got {:?}", other),
         }
+    }
+
+    /// Deterministic pseudo-random points in the unit cube, clustered towards one corner so the
+    /// uniform tree has many more cells than the adaptive tree.
+    fn clustered_points(n: usize) -> Mat<f64> {
+        let modulus = 2_147_483_647_u64;
+        let mut state = 1_u64;
+        let mut next_coordinate = || {
+            state = (state * 48_271) % modulus;
+            (state as f64 / modulus as f64).powi(3)
+        };
+
+        Mat::from_fn(n, 3, |_, _| next_coordinate())
+    }
+
+    /// Releasing the upward-pass state must not change what the leaf pass evaluates.
+    fn release_upward_state_preserves_leaf_values(adaptive_tree: bool) {
+        let source_points = Arc::new(clustered_points(2000));
+        let target_points = Mat::<f64>::from_fn(500, 3, |i, j| ((i * 3 + j) % 97) as f64 / 96.0);
+        let weights = Mat::<f64>::from_fn(source_points.nrows(), 1, |i, _| {
+            ((i % 13) as f64 - 6.0) / 6.0
+        });
+
+        let mut tree = FmmTree::new(
+            source_points,
+            4usize,
+            TestKernel,
+            adaptive_tree,
+            false,
+            Some(vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0]),
+            None,
+        );
+
+        tree.set_weights(weights.as_ref());
+        tree.set_local_coefficients(weights.as_ref());
+
+        let before = tree
+            .evaluate_leaves(weights.as_ref(), target_points.as_ref())
+            .unwrap();
+
+        tree.release_upward_state();
+
+        let after = tree
+            .evaluate_leaves(weights.as_ref(), target_points.as_ref())
+            .unwrap();
+
+        for i in 0..before.nrows() {
+            assert_eq!(before[(i, 0)], after[(i, 0)], "target {i} changed");
+        }
+    }
+
+    #[test]
+    fn release_upward_state_preserves_leaf_values_uniform() {
+        release_upward_state_preserves_leaf_values(false);
+    }
+
+    #[test]
+    fn release_upward_state_preserves_leaf_values_adaptive() {
+        release_upward_state_preserves_leaf_values(true);
+    }
+
+    #[test]
+    #[should_panic(expected = "unavailable after `release_upward_state`")]
+    fn set_weights_panics_after_release_upward_state() {
+        let source_points = Arc::new(clustered_points(500));
+        let weights = Mat::<f64>::from_fn(source_points.nrows(), 1, |_, _| 1.0);
+
+        let mut tree = FmmTree::new(
+            source_points,
+            4usize,
+            TestKernel,
+            false,
+            false,
+            Some(vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0]),
+            None,
+        );
+
+        tree.set_weights(weights.as_ref());
+        tree.set_local_coefficients(weights.as_ref());
+        tree.release_upward_state();
+        tree.set_weights(weights.as_ref());
     }
 }

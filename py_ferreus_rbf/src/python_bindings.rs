@@ -259,13 +259,14 @@ pub struct FmmParams {
 #[pymethods]
 impl FmmParams {
     #[new]
-    #[pyo3(signature=(interpolation_order, max_points_per_cell, compression_type, epsilon, eval_chunk_size))]
+    #[pyo3(signature=(interpolation_order, max_points_per_cell, compression_type, epsilon, eval_chunk_size, eval_adaptive=true))]
     fn new(
         interpolation_order: usize,
         max_points_per_cell: usize,
         compression_type: FmmCompressionType,
         epsilon: f64,
         eval_chunk_size: usize,
+        eval_adaptive: bool,
     ) -> PyResult<Self> {
         Ok(Self {
             inner: config::FmmParams {
@@ -274,6 +275,7 @@ impl FmmParams {
                 compression_type: compression_type.into(),
                 epsilon,
                 eval_chunk_size,
+                eval_adaptive,
             },
         })
     }

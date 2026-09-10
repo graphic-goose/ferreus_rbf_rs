@@ -765,7 +765,7 @@ impl RBFInterpolator {
     /// let values = rbfi.evaluate(targets.as_ref());
     /// ```
     pub fn evaluate(&self, target_points: MatRef<f64>) -> Mat<f64> {
-        let adaptive = true;
+        let adaptive = self.params.fmm_params.eval_adaptive;
         let sparse = false;
 
         let extents = self._get_evaluator_union_extents(Some(target_points), None);
@@ -817,7 +817,7 @@ impl RBFInterpolator {
     /// let (values, gradients) = rbfi.evaluate_with_gradients(targets.as_ref());
     /// ```
     pub fn evaluate_with_gradients(&self, target_points: MatRef<f64>) -> (Mat<f64>, Mat<f64>) {
-        let adaptive = true;
+        let adaptive = self.params.fmm_params.eval_adaptive;
         let sparse = false;
 
         let extents = self._get_evaluator_union_extents(Some(target_points), None);
@@ -919,7 +919,7 @@ impl RBFInterpolator {
     /// rbfi.build_evaluator(None);
     /// ```
     pub fn build_evaluator(&mut self, extents: Option<Vec<f64>>) {
-        let adaptive = true;
+        let adaptive = self.params.fmm_params.eval_adaptive;
         let sparse = false;
 
         let mut tree = self._setup_fmmtree(adaptive, sparse, extents);
@@ -927,6 +927,9 @@ impl RBFInterpolator {
         tree.set_weights(self.coefficients.point_coefficients.as_mat_ref());
 
         tree.set_local_coefficients(self.coefficients.point_coefficients.as_mat_ref());
+
+        // The stored evaluator only ever runs leaf passes, so the upward/downward pass state can be dropped
+        tree.release_upward_state();
 
         self.evaluator = Some(tree);
     }

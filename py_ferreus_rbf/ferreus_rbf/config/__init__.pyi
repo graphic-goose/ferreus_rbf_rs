@@ -118,7 +118,8 @@ class FmmParams:
     - `max_points_per_cell`: `256`  
     - `compression_type`: [`FmmCompressionType.ACA`][ferreus_rbf.config.FmmCompressionType.ACA]  
     - `epsilon`: `10^(-interpolation_order)`  
-    - `eval_chunk_size`: `1024`  
+    - `eval_chunk_size`: `1024`
+    - `eval_adaptive`: `True`
 
     Parameters
     ----------
@@ -132,6 +133,12 @@ class FmmParams:
         Tolerance threshold for M2L compression.
     eval_chunk_size : int
         Number of target points to evaluate in each chunk.
+    eval_adaptive : bool
+        Whether target-evaluation trees use adaptive subdivision. 
+        Uniform (`false`) is typically faster for dense uniformly 
+        distributed target points, but comes at a higher memory 
+        cost. Does not affect the solve phase, which always uses 
+        an adaptive tree.
     """
     def __init__(
         self,
@@ -140,6 +147,7 @@ class FmmParams:
         compression_type: FmmCompressionType,
         epsilon: float,
         eval_chunk_size: int,
+        eval_adaptive: bool = True,
     ) -> None: ...
 
 class Params:

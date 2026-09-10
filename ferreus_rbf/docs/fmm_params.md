@@ -27,6 +27,7 @@ Orders that are too low may stall solver convergence.
 - `compression_type`: [`FmmCompressionType::ACA`]
 - `epsilon`: `10^(-interpolation_order)`
 - `eval_chunk_size`: `1024`
+- `eval_adaptive`: `true`
 
 # Examples
 ```
