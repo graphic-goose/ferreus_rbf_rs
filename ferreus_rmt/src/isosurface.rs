@@ -427,6 +427,7 @@ pub fn build_isosurfaces<F>(
     seed_points: MatRef<f64>,
     extents: &[f64],
     resolution: f64,
+    sampling_transform: Option<MatRef<'_, f64>>,
     isovalues: Vec<f64>,
     isosurface_fn: &mut F,
     gradient_fn: Option<&mut dyn FnMut(MatRef<f64>) -> (Mat<f64>, Mat<f64>)>,
@@ -446,6 +447,7 @@ where
                     seed_points,
                     extents,
                     resolution,
+                    sampling_transform,
                     isovalue,
                     isosurface_fn,
                     Some(&mut *gradient_fn),
@@ -461,6 +463,7 @@ where
                     seed_points,
                     extents,
                     resolution,
+                    sampling_transform,
                     isovalue,
                     isosurface_fn,
                     None,
@@ -486,10 +489,22 @@ where
 /// is used for seed projection; otherwise gradients are estimated by central differences. The
 /// selected [`ClusterMethod`] controls how topology-compatible edge intersections are combined
 /// into mesh vertices. [`BoundaryClosure`] controls whether clipped AABB boundaries are closed.
+/// 
+/// `resolution` is the maximum nominal world-space sampling distance,
+/// not a maximum output triangle-edge length.
+///
+/// `sampling_transform` maps world row vectors into sampling coordinates.
+/// RMT uses its inverse to construct the world-space lattice and derives
+/// the sampling density internally. Uniform scaling of this matrix does
+/// not affect the resulting lattice.
+///
+/// Seeds, callback inputs, callback gradients, extents and returned vertices
+/// are all expressed in world coordinates.
 pub fn build_isosurface<F>(
     seed_points: MatRef<f64>,
     extents: &[f64],
     resolution: f64,
+    sampling_transform: Option<MatRef<'_, f64>>,
     isovalue: f64,
     isosurface_fn: &mut F,
     gradient_fn: Option<&mut dyn FnMut(MatRef<f64>) -> (Mat<f64>, Mat<f64>)>,
@@ -505,7 +520,7 @@ where
         min_corner: [extents[0], extents[1], extents[2]],
         max_corner: [extents[3], extents[4], extents[5]],
     };
-    let lattice = SampleLattice::new(resolution, extents);
+    let lattice = SampleLattice::new(resolution, extents, sampling_transform);
     let bbox_eps = bbox_eps(extents);
     let mut vertices: Vec<f64> = Vec::new();
     let mut edge_ref: HashMap<([i64; 3], usize), usize> = HashMap::new();

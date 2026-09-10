@@ -31,5 +31,9 @@ pub fn ferreus_rmt(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<python_bindings::Mesh>()?;
     m.add_function(wrap_pyfunction!(python_bindings::build_isosurface, m)?)?;
     m.add_function(wrap_pyfunction!(python_bindings::build_isosurfaces, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        python_bindings::get_evaluation_extents,
+        m
+    )?)?;
     Ok(())
 }

@@ -192,6 +192,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         source_points.as_ref(),
         &extents,
         resolution,
+        None,
         0.0,
         &mut surface_fn,
         None,

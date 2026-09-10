@@ -138,15 +138,15 @@ impl GlobalTrendTransform {
     pub fn new(center: Row<f64>, global_trend: GlobalTrend) -> Self {
         let affine_transform = match global_trend {
             GlobalTrend::One { major_ratio } => {
-                let transform = mat![[1.0, -center[0]], [0.0, 1.0],];
+                assert!(
+                    major_ratio.is_finite() && major_ratio > 0.0,
+                    "major_ratio must be finite and positive"
+                );
 
-                let transform_back = mat![[1.0, center[0]], [0.0, 1.0],];
-
-                let scale = mat![[1.0 / major_ratio, 0.0], [0.0, 1.0],];
-
-                let affine_transform = transform_back * scale * transform;
-
-                affine_transform.transpose().to_owned()
+                mat![
+                    [1.0, 0.0],
+                    [0.0, 1.0],
+                ]
             }
             GlobalTrend::Two {
                 rotation_angle,
@@ -176,9 +176,11 @@ impl GlobalTrendTransform {
                     [0.0, 0.0, 1.0],
                 ];
 
+                let ratio_scale = (major_ratio * minor_ratio).sqrt();
+
                 let scale = mat![
-                    [1.0 / major_ratio, 0.0, 0.0],
-                    [0.0, 1.0 / minor_ratio, 0.0],
+                    [ratio_scale / major_ratio, 0.0, 0.0],
+                    [0.0, ratio_scale / minor_ratio, 0.0],
                     [0.0, 0.0, 1.0],
                 ];
 
@@ -244,10 +246,15 @@ impl GlobalTrendTransform {
                 // then scale in rotated frame.
                 let rotation = rot_z_2 * rot_x * rot_z;
 
+                // Calculate the geometric mean normalisation ratios.
+                // Using this method ensures the ellipsoid has the same volume as a sphere.
+                let ratio_scale =
+                    (major_ratio * semi_major_ratio * minor_ratio).cbrt();
+
                 let scale = mat![
-                    [1.0 / major_ratio, 0.0, 0.0, 0.0],
-                    [0.0, 1.0 / semi_major_ratio, 0.0, 0.0],
-                    [0.0, 0.0, 1.0 / minor_ratio, 0.0],
+                    [ratio_scale / major_ratio, 0.0, 0.0, 0.0],
+                    [0.0, ratio_scale / semi_major_ratio, 0.0, 0.0],
+                    [0.0, 0.0, ratio_scale / minor_ratio, 0.0],
                     [0.0, 0.0, 0.0, 1.0],
                 ];
 

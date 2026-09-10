@@ -83,6 +83,7 @@ def build_isosurface(
     isovalue: float,
     isosurface_fn: Callable[[npt.NDArray[np.float64]], npt.NDArray[np.float64]],
     *,
+    sampling_transform: npt.NDArray[np.float64] | None = None,
     gradient_fn: Optional[
         Callable[
             [npt.NDArray[np.float64]],
@@ -113,6 +114,8 @@ def build_isosurface(
         Must take in a 2D numpy array of float64 3D point coordinates of shape (N, 3) and
         return a float64 values array of shape (N,) or (N, 1), where N is the number of points
         being evaluated.
+    sampling_transform : npt.NDArray[np.float64]
+        Optional transform to transform the sample lattice.
     gradient_fn : Callable | None, optional
         Optional callable for evaluating values and gradients during seed projection. It must
         take a float64 array of point coordinates with shape (N, 3) and return a tuple of

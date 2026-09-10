@@ -263,6 +263,7 @@ impl Mesh {
     isovalue,
     surface_fn,
     *,
+    sampling_transform=None,
     gradient_fn=None,
     cluster_method=ClusterMethod::CurvatureWeighted,
     boundary_closure=BoundaryClosure::None,
@@ -275,11 +276,13 @@ pub fn build_isosurface(
     resolution: f64,
     isovalue: f64,
     surface_fn: Py<PyAny>,
+    sampling_transform: Option<PyReadonlyArray2<'_, f64>>,
     gradient_fn: Option<Py<PyAny>>,
     cluster_method: ClusterMethod,
     boundary_closure: BoundaryClosure,
     progress_callback: Option<Py<Progress>>,
 ) -> PyResult<Mesh> {
+    let sampling_transform = read_sampling_transform(sampling_transform)?;
     let seed_points_mat = seed_points.into_faer();
     validate_mat_shape(seed_points_mat, "seed_points", 3)?;
     let extents_slice = extents.as_slice()?;
@@ -364,6 +367,7 @@ pub fn build_isosurface(
         seed_points_mat,
         extents_slice,
         resolution,
+        sampling_transform.as_ref().map(|transform| transform.as_ref()),
         isovalue,
         &mut py_surface_fn,
         gradient_fn_ref,
@@ -383,6 +387,7 @@ pub fn build_isosurface(
     isovalues,
     isosurface_fn,
     *,
+    sampling_transform=None,
     gradient_fn=None,
     cluster_method=ClusterMethod::CurvatureWeighted,
     boundary_closure=BoundaryClosure::None,
@@ -395,11 +400,14 @@ pub fn build_isosurfaces<'py>(
     resolution: f64,
     isovalues: Vec<f64>,
     isosurface_fn: Py<PyAny>,
+    sampling_transform: Option<PyReadonlyArray2<'_, f64>>,
     gradient_fn: Option<Py<PyAny>>,
     cluster_method: Option<ClusterMethod>,
     boundary_closure: Option<BoundaryClosure>,
     progress_callback: Option<Py<Progress>>,
 ) -> PyResult<Bound<'py, PyList>> {
+    let sampling_transform = read_sampling_transform(sampling_transform)?;
+
     let extents_slice = extents.as_slice()?;
     if extents_slice.len() != 6 {
         return Err(PyValueError::new_err(
@@ -494,6 +502,7 @@ pub fn build_isosurfaces<'py>(
         seed_points_mat,
         extents_slice,
         resolution,
+        sampling_transform.as_ref().map(|transform| transform.as_ref()),
         isovalues,
         &mut py_surface_fn,
         gradient_fn_ref,
@@ -508,4 +517,98 @@ pub fn build_isosurfaces<'py>(
         .collect();
 
     PyList::new(py, meshes)
+}
+
+fn read_sampling_transform(
+    sampling_transform: Option<PyReadonlyArray2<'_, f64>>,
+) -> PyResult<Option<Mat<f64>>> {
+    sampling_transform
+        .map(|array| {
+            let transform = array.into_faer();
+
+            if transform.shape() != (3, 3) {
+                return Err(PyValueError::new_err(
+                    "sampling_transform must have shape (3, 3)",
+                ));
+            }
+
+            if !(0..3).all(|row| {
+                (0..3).all(|col| transform[(row, col)].is_finite())
+            }) {
+                return Err(PyValueError::new_err(
+                    "sampling_transform must contain finite values",
+                ));
+            }
+
+            let singular_values = transform
+                .singular_values()
+                .map_err(|_| PyValueError::new_err(
+                    "sampling_transform SVD failed",
+                ))?;
+
+            let minimum_scale = singular_values
+                .iter()
+                .copied()
+                .fold(f64::INFINITY, f64::min);
+
+            let maximum_scale = singular_values
+                .iter()
+                .copied()
+                .fold(0.0, f64::max);
+
+            if !minimum_scale.is_finite()
+                || !maximum_scale.is_finite()
+                || minimum_scale <= maximum_scale * 1.0e-12
+                || !(transform.determinant() > 0.0)
+            {
+                return Err(PyValueError::new_err(
+                    "sampling_transform must be well conditioned \
+                     and preserve orientation",
+                ));
+            }
+
+            Ok(transform.to_owned())
+        })
+        .transpose()
+}
+
+#[pyfunction]
+#[pyo3(signature = (extents, resolution, *, sampling_transform=None))]
+pub fn get_evaluation_extents(
+    extents: PyReadonlyArray1<'_, f64>,
+    resolution: f64,
+    sampling_transform: Option<PyReadonlyArray2<'_, f64>>,
+) -> PyResult<Vec<f64>> {
+    let extents = extents.as_slice()?;
+
+    if extents.len() != 6 {
+        return Err(PyValueError::new_err(
+            "extents must have shape (6,)",
+        ));
+    }
+
+    if !resolution.is_finite() || resolution <= 0.0 {
+        return Err(PyValueError::new_err(
+            "resolution must be finite and positive",
+        ));
+    }
+
+    for axis in 0..3 {
+        if !extents[axis].is_finite()
+            || !extents[axis + 3].is_finite()
+            || extents[axis] >= extents[axis + 3]
+        {
+            return Err(PyValueError::new_err(
+                "extents must be finite and have positive lengths",
+            ));
+        }
+    }
+
+    let sampling_transform = read_sampling_transform(sampling_transform)?;
+
+    Ok(ferreus_rmt::get_evaluation_extents(
+        extents,
+        resolution,
+        sampling_transform.as_ref().map(|transform| transform.as_ref()),
+    ))
 }

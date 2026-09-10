@@ -82,6 +82,10 @@ pub fn ferreus_rbf(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<python_bindings::RBFTestFunctions>()?;
     m.add_class::<python_bindings::BoundaryClosure>()?;
     m.add_class::<python_bindings::Mesh>()?;
+    m.add_function(wrap_pyfunction!(
+        python_bindings::get_evaluation_extents,
+        m
+    )?)?;
 
     Ok(())
 }

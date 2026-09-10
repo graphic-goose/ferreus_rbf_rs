@@ -119,7 +119,7 @@ mod worker_pool;
 /// Functions related to isosurfacing algorithms
 pub mod isosurfacing {
     pub use ferreus_rmt::{
-        BoundaryClosure, ClusterMethod, Mesh, build_isosurface, build_isosurfaces,
+        BoundaryClosure, ClusterMethod, Mesh, build_isosurface, build_isosurfaces, get_evaluation_extents,
     };
 }
 

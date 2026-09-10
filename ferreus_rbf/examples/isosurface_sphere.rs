@@ -51,6 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         seed_points.as_ref(),
         &extents,
         resolution,
+        None,
         isovalue,
         &mut surface_fn,
         None,

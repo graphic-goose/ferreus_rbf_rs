@@ -70,10 +70,10 @@ fn curvature_weight_for_edge(
         return None;
     }
 
-    let o_world = lattice.ijk_to_world(owner);
-    let a_world = lattice.ijk_to_world(other);
+    let o_sampling = lattice.ijk_to_sampling(owner);
+    let a_sampling = lattice.ijk_to_sampling(other);
 
-    let oa = a_world.sub(o_world);
+    let oa = a_sampling.sub(o_sampling);
     let oa_len = oa.norm();
 
     if oa_len <= EPS {
@@ -110,8 +110,8 @@ fn curvature_weight_for_edge(
                 return None;
             }
 
-            let b_world = lattice.ijk_to_world(neighbour);
-            let ob = b_world.sub(o_world);
+            let b_sampling = lattice.ijk_to_sampling(neighbour);
+            let ob = b_sampling.sub(o_sampling);
             let ob_len = ob.norm();
 
             if ob_len <= EPS {

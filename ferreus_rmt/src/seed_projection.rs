@@ -15,7 +15,7 @@
 //! gradient, clamps them to the extraction lattice, and returns the unique lattice cells that
 //! should seed wavefront expansion.
 
-use std::collections::HashSet;
+use std::{collections::HashSet, array};
 
 use faer::{Mat, MatRef};
 
@@ -26,6 +26,9 @@ use crate::lattice::SampleLattice;
 /// The input matrix must be `N x 3`. Seeds are first clamped to the lattice AABB and deduplicated
 /// by their initial lattice cell. The remaining representatives are then iteratively projected
 /// toward `f(x) = isovalue` using values and gradients supplied by `gradient_fn`.
+/// 
+/// During projection, active seeds at identical world positions are merged to avoid repeated
+/// evaluations. Only the retained representatives contribute to the returned seed cells.
 pub(crate) fn get_unique_seed_point_ijks(
     seed_points: MatRef<f64>,
     gradient_fn: &mut dyn FnMut(MatRef<f64>) -> (Mat<f64>, Mat<f64>),
@@ -40,6 +43,7 @@ pub(crate) fn get_unique_seed_point_ijks(
 
     let minc = lattice.extents.min_corner;
     let maxc = lattice.extents.max_corner;
+    let metric = lattice.seed_projection_metric();
 
     let clamp = |v: f64, lo: f64, hi: f64| v.max(lo).min(hi);
 
@@ -71,9 +75,33 @@ pub(crate) fn get_unique_seed_point_ijks(
     let mut active: Vec<usize> = (0..x.nrows()).collect();
     let mut active_points = Vec::with_capacity(active.len() * 3);
 
+    // Tracks unique positions within each iteration and seeds removed as duplicates.
+    let mut seen_points = HashSet::<[u64; 3]>::with_capacity(active.len());
+    let mut duplicate_points = HashSet::<usize>::new();
+
     // Repeatedly push each point toward the target level-set f(x) = isovalue.
     // Each iteration uses a Newton step along the local gradient direction.
     for _ in 0..NITERS {
+        // Keep one active seed per exact world position before evaluating values and gradients.
+        // Unlike initial cell filtering, this preserves distinct positions within the same cell.
+        seen_points.clear();
+
+        active.retain(|&i| {
+            // Use floating-point bits as hash keys without rounding the coordinates.
+            let key = array::from_fn(|axis| {
+                let value = x[(i, axis)];
+
+                // Treat positive and negative zero as the same coordinate.
+                if value == 0.0 { 0 } else { value.to_bits() }
+            });
+
+            if seen_points.insert(key) {
+                true
+            } else {
+                duplicate_points.insert(i);
+                false
+            }
+        });        
         active_points.clear();
         active_points.reserve(active.len() * 3);
         for &i in &active {
@@ -97,16 +125,21 @@ pub(crate) fn get_unique_seed_point_ijks(
             let gx = g[(active_idx, 0)];
             let gy = g[(active_idx, 1)];
             let gz = g[(active_idx, 2)];
-            // Squared gradient norm: ||grad f||^2. Very small values are numerically unsafe.
-            let g2 = gx * gx + gy * gy + gz * gz;
+
+            let dx = gx * metric[(0, 0)] + gy * metric[(1, 0)] + gz * metric[(2, 0)];
+            let dy = gx * metric[(0, 1)] + gy * metric[(1, 1)] + gz * metric[(2, 1)];
+            let dz = gx * metric[(0, 2)] + gy * metric[(1, 2)] + gz * metric[(2, 2)];
+
+            // Squared gradient norm in sampling space. Very small values are numerically unsafe.
+            let g2 = gx * dx + gy * dy + gz * dz;
 
             if g2 >= G2_MIN {
-                // Newton update for a level-set constraint:
-                // x <- x - (f(x)-isovalue)/||grad f||^2 * grad f
+                // Newton update for a level-set constraint in the sampling metric:
+                // x <- x - (f(x)-isovalue)/g2 * direction
                 let scale = fxi / g2;
-                x[(i, 0)] -= scale * gx;
-                x[(i, 1)] -= scale * gy;
-                x[(i, 2)] -= scale * gz;
+                x[(i, 0)] -= scale * dx;
+                x[(i, 1)] -= scale * dy;
+                x[(i, 2)] -= scale * dz;
                 any_ok = true;
             }
 
@@ -124,8 +157,11 @@ pub(crate) fn get_unique_seed_point_ijks(
         }
     }
 
+    // Exclude removed duplicates so their unchanged positions do not seed extra cells.
     x.row_iter()
-        .map(|row| lattice.world_to_ijk([row[0], row[1], row[2]]))
+        .enumerate()
+        .filter(|(i, _)| !duplicate_points.contains(i))
+        .map(|(_, row)| lattice.world_to_ijk([row[0], row[1], row[2]]))
         .collect()
 }
 
@@ -179,12 +215,5 @@ where
 
 /// Returns the finite-difference step length used for estimated seed projection gradients.
 fn central_difference_step(lattice: &SampleLattice) -> f64 {
-    lattice
-        .spacing
-        .iter()
-        .copied()
-        .fold(f64::INFINITY, f64::min)
-        .abs()
-        .max(1.0e-4)
-        * 1.0e-4
+    lattice.gradient_step
 }

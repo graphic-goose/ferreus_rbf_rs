@@ -127,5 +127,5 @@ mod topology;
 pub use {
     boundary_closure::BoundaryClosure,
     isosurface::{ClusterMethod, build_isosurface, build_isosurfaces},
-    mesh::Mesh,
+    mesh::Mesh, lattice::get_evaluation_extents,
 };

@@ -1078,14 +1078,19 @@ impl RBFInterpolator {
         let dimensions = self.points.ncols();
         assert_eq!(dimensions, 3usize, "Only supported for 3D isosurfacing");
 
-        let mut evaluator_extents = self._get_evaluator_union_extents(None, Some(extents));
+        let sampling_transform = self
+            .global_trend
+            .as_ref()
+            .map(|trend| trend.linear_part(dimensions));
 
-        evaluator_extents[0..dimensions]
-            .iter_mut()
-            .for_each(|val| *val -= resolution * 10.0);
-        evaluator_extents[dimensions..]
-            .iter_mut()
-            .for_each(|val| *val += resolution * 10.0);
+        let evaluation_extents = isosurfacing::get_evaluation_extents(
+            extents,
+            resolution,
+            sampling_transform.as_ref().map(|transform| transform.as_ref()),
+        );
+
+        let evaluator_extents =
+            self._get_evaluator_union_extents(None, Some(&evaluation_extents));
 
         self.build_evaluator(Some(evaluator_extents));
 
@@ -1146,6 +1151,7 @@ impl RBFInterpolator {
                 seed_points.as_mat_ref(),
                 extents,
                 resolution,
+                sampling_transform.as_ref().map(|transform| transform.as_ref()),
                 *val,
                 &mut surface_fn,
                 Some(&mut gradient_fn),

@@ -147,6 +147,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         source_points.as_ref(),
         &source_point_extents,
         resolution,
+        None,
         isovalue,
         &mut surface_fn,
         Some(&mut gradient_fn),
