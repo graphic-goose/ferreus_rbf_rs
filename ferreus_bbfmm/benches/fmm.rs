@@ -14,7 +14,7 @@ use criterion::{
     measurement::WallTime, SamplingMode,
 };
 use faer::{Mat, RowRef, mat::AsMatRef};
-use ferreus_bbfmm::{FmmParams, FmmTree, KernelFunction, M2LCompressionType};
+use ferreus_bbfmm::{FmmParams, FmmTree, GradientScale, KernelFunction, M2LCompressionType};
 use rand::{Rng, SeedableRng, rngs::StdRng};
 
 /// The linear RBF kernel, `-r`. Duplicated here rather than pulled in from
@@ -59,6 +59,23 @@ impl KernelFunction for LinearRbfKernel {
             *g *= scale;
         }
         Some(-r)
+    }
+
+    /// Opts in to the batched near-field paths, as the production kernels in
+    /// `ferreus_rbf_utils` do. Without these the FMM falls back to scalar
+    /// per-pair evaluation, and the benchmarks would not measure the code users run.
+    #[inline(always)]
+    fn evaluate_from_distance_sq(&self, r2: f64) -> Option<f64> {
+        Some(-r2.sqrt())
+    }
+
+    #[inline(always)]
+    fn value_and_gradient_from_distance_sq(&self, r2: f64) -> Option<(f64, GradientScale)> {
+        if r2 <= f64::EPSILON {
+            return Some((-r2.sqrt(), GradientScale::Zero));
+        }
+        let r = r2.sqrt();
+        Some((-r, GradientScale::Scale(-1.0 / r)))
     }
 }
 
