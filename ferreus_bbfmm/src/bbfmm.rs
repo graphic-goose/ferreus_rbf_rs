@@ -1218,6 +1218,16 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
                 let u_cell_points =
                     utils::select_mat_rows(self.source_points.as_mat_ref(), u_cell_source_indices);
 
+                let batched = utils::supports_batched_kernel(dims, &self.kernel);
+                let batched_grads = utils::supports_batched_gradients(dims, &self.kernel);
+                let empty: &[f64] = &[];
+                let mut source_axes: [&[f64]; 3] = [empty; 3];
+                if batched || batched_grads {
+                    for d in 0..dims {
+                        source_axes[d] = u_cell_points.col_as_slice(d);
+                    }
+                }
+
                 for rhs in 0..self.nrhs {
                     let rhs_vals = u_cell_values.col(rhs);
                     let value_ptr = target_values_ref.col(rhs).as_ptr() as *mut f64;
@@ -1248,6 +1258,73 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
                     } else {
                         (std::ptr::null_mut(), None, None)
                     };
+
+                    // Gradient mode. Accumulates the value and each gradient
+                    // component in source order onto what is already in the
+                    // destination, so bit-identical to the scalar loop below.
+                    if WITH_GRADS && batched_grads {
+                        let weights = u_cell_values.col_as_slice(rhs);
+                        let grad_ptrs = [
+                            grad_col0_ptr,
+                            grad_col1_ptr.unwrap_or(std::ptr::null_mut()),
+                            grad_col2_ptr.unwrap_or(std::ptr::null_mut()),
+                        ];
+                        for &target_idx in cell_target_indices {
+                            let mut target = [0.0f64; 3];
+                            for d in 0..dims {
+                                target[d] = *target_points.get(target_idx, d);
+                            }
+                            unsafe {
+                                let mut seed = utils::ValueAndGradient {
+                                    value: *value_ptr.add(target_idx),
+                                    gradient: [0.0; 3],
+                                };
+                                for d in 0..dims {
+                                    seed.gradient[d] = *grad_ptrs[d].add(target_idx);
+                                }
+                                let out = utils::accumulate_weighted_kernel_gradients(
+                                    &self.kernel,
+                                    &target,
+                                    &source_axes,
+                                    weights,
+                                    dims,
+                                    seed,
+                                );
+                                *value_ptr.add(target_idx) = out.value;
+                                for d in 0..dims {
+                                    *grad_ptrs[d].add(target_idx) = out.gradient[d];
+                                }
+                            }
+                        }
+                        continue;
+                    }
+
+                    // Values-only and a kernel that can work from a squared
+                    // distance: take the batched path, which forms a tile of
+                    // squared distances in one vectorisable pass. It folds the
+                    // contributions in source order onto the value already in the
+                    // destination, so it is bit-identical to the scalar loop.
+                    if !WITH_GRADS && batched {
+                        let weights = u_cell_values.col_as_slice(rhs);
+                        for &target_idx in cell_target_indices {
+                            let mut target = [0.0f64; 3];
+                            for d in 0..dims {
+                                target[d] = *target_points.get(target_idx, d);
+                            }
+                            unsafe {
+                                let slot = value_ptr.add(target_idx);
+                                *slot = utils::accumulate_weighted_kernel(
+                                    &self.kernel,
+                                    &target,
+                                    &source_axes,
+                                    weights,
+                                    dims,
+                                    *slot,
+                                );
+                            }
+                        }
+                        continue;
+                    }
 
                     for &target_idx in cell_target_indices {
                         let target = target_points.row(target_idx);
@@ -1310,6 +1387,16 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
 
             let w_cell_column_index = self.tree_lists.key_to_index_map.get(w_cell).unwrap();
 
+            let batched = utils::supports_batched_kernel(dims, &self.kernel);
+            let batched_grads = utils::supports_batched_gradients(dims, &self.kernel);
+            let empty: &[f64] = &[];
+            let mut node_axes: [&[f64]; 3] = [empty; 3];
+            if batched || batched_grads {
+                for d in 0..dims {
+                    node_axes[d] = scaled_cheb_nodes.col_as_slice(d);
+                }
+            }
+
             cell_target_indices
                 .chunks(self.eval_chunk_size)
                 .for_each(|chunk_target_indices| {
@@ -1342,6 +1429,75 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
                         } else {
                             (std::ptr::null_mut(), None, None)
                         };
+
+                        // Gradient mode, same batched path with the Chebyshev
+                        // nodes as sources. Folded in node order, bit-identical.
+                        if WITH_GRADS && batched_grads {
+                            let weights = &self.multipole_coefficients.col_as_slice(
+                                *w_cell_column_index + rhs * self.tree_lists.tree.len(),
+                            )[..scaled_cheb_nodes.nrows()];
+                            let grad_ptrs = [
+                                grad_col0_ptr,
+                                grad_col1_ptr.unwrap_or(std::ptr::null_mut()),
+                                grad_col2_ptr.unwrap_or(std::ptr::null_mut()),
+                            ];
+                            for &target_idx in chunk_target_indices {
+                                let mut target = [0.0f64; 3];
+                                for d in 0..dims {
+                                    target[d] = *target_points.get(target_idx, d);
+                                }
+                                unsafe {
+                                    let mut seed = utils::ValueAndGradient {
+                                        value: *value_ptr.add(target_idx),
+                                        gradient: [0.0; 3],
+                                    };
+                                    for d in 0..dims {
+                                        seed.gradient[d] = *grad_ptrs[d].add(target_idx);
+                                    }
+                                    let out = utils::accumulate_weighted_kernel_gradients(
+                                        &self.kernel,
+                                        &target,
+                                        &node_axes,
+                                        weights,
+                                        dims,
+                                        seed,
+                                    );
+                                    *value_ptr.add(target_idx) = out.value;
+                                    for d in 0..dims {
+                                        *grad_ptrs[d].add(target_idx) = out.gradient[d];
+                                    }
+                                }
+                            }
+                            continue;
+                        }
+
+                        // Same batched near-field path as `particle_to_particle`:
+                        // the Chebyshev nodes act as the sources here. Folded in
+                        // node order onto the existing value, so bit-identical.
+                        if !WITH_GRADS && batched {
+                            let weights = &self
+                                .multipole_coefficients
+                                .col_as_slice(*w_cell_column_index + rhs * self.tree_lists.tree.len())
+                                [..scaled_cheb_nodes.nrows()];
+                            for &target_idx in chunk_target_indices {
+                                let mut target = [0.0f64; 3];
+                                for d in 0..dims {
+                                    target[d] = *target_points.get(target_idx, d);
+                                }
+                                unsafe {
+                                    let slot = value_ptr.add(target_idx);
+                                    *slot = utils::accumulate_weighted_kernel(
+                                        &self.kernel,
+                                        &target,
+                                        &node_axes,
+                                        weights,
+                                        dims,
+                                        *slot,
+                                    );
+                                }
+                            }
+                            continue;
+                        }
 
                         for &target_idx in chunk_target_indices {
                             let target = target_points.row(target_idx);

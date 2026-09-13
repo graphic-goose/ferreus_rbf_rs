@@ -926,39 +926,80 @@ pub fn get_approximation_coefficients(
 
     let num_columns = interpolation_order.pow(*dimensions as u32);
 
-    let mut transfer_coefficients = Mat::<f64>::zeros(cell_point_locations.nrows(), num_columns);
-    let mut gradient_coefficients = evaluate_gradients
-        .then(|| Mat::<f64>::zeros(cell_point_locations.nrows(), num_columns * *dimensions));
-
     let dims = *dimensions;
-    let mut multi_idx = [0usize; 3];
     let nrows = cell_point_locations.nrows();
-    for i in 0..nrows {
-        for col in 0..num_columns {
-            let mut rem = col;
-            for d in (0..dims).rev() {
-                multi_idx[d] = rem % interpolation_order;
-                rem /= interpolation_order;
-            }
 
-            let mut v = 1.0;
-            for d in 0..dims {
-                v *= one_d_transfer_coefficients[d][(i, multi_idx[d])];
-            }
-            transfer_coefficients[(i, col)] = v;
+    let mut transfer_coefficients = Mat::<f64>::zeros(nrows, num_columns);
+    let mut gradient_coefficients =
+        evaluate_gradients.then(|| Mat::<f64>::zeros(nrows, num_columns * dims));
 
-            if let Some(ref mut grads) = gradient_coefficients {
-                let derivs = one_d_derivative_coefficients.as_ref().unwrap();
-                for g in 0..dims {
-                    let mut v = derivs[g][(i, multi_idx[g])];
-                    for d in 0..dims {
-                        if d != g {
-                            v *= one_d_transfer_coefficients[d][(i, multi_idx[d])];
-                        }
-                    }
-                    grads[(i, g * num_columns + col)] = v;
+    // Columns on the outside, points on the inside. Both the 1-D coefficient
+    // columns and the output column are contiguous in the point index, so each
+    // tensor-product column becomes one flat vectorisable pass. Products are
+    // formed in ascending dimension order to match the original `v *= ...` chain
+    // exactly, so the result is bit-for-bit unchanged.
+    //
+    // The column multi-index is carried as an odometer over the last dimension,
+    // which is how `col % order` / `col /= order` ordered it. Deriving it per
+    // output element instead cost `dims` runtime integer divisions, which is what
+    // dominated this function.
+    let mut multi_idx = [0usize; 3];
+    for col in 0..num_columns {
+        let mut src: [&[f64]; 3] = [&[]; 3];
+        for d in 0..dims {
+            src[d] = one_d_transfer_coefficients[d].col_as_slice(multi_idx[d]);
+        }
+
+        let dst = transfer_coefficients.col_as_slice_mut(col);
+        match dims {
+            1 => dst.copy_from_slice(src[0]),
+            2 => {
+                for i in 0..nrows {
+                    dst[i] = src[0][i] * src[1][i];
                 }
             }
+            _ => {
+                for i in 0..nrows {
+                    dst[i] = src[0][i] * src[1][i] * src[2][i];
+                }
+            }
+        }
+
+        if let Some(ref mut grads) = gradient_coefficients {
+            let derivs = one_d_derivative_coefficients.as_ref().unwrap();
+            for g in 0..dims {
+                let dsrc = derivs[g].col_as_slice(multi_idx[g]);
+                let gdst = grads.col_as_slice_mut(g * num_columns + col);
+                match dims {
+                    1 => gdst.copy_from_slice(dsrc),
+                    2 => {
+                        let other = src[1 - g];
+                        for i in 0..nrows {
+                            gdst[i] = dsrc[i] * other[i];
+                        }
+                    }
+                    _ => {
+                        // The remaining two dimensions, in ascending order.
+                        let (o0, o1) = match g {
+                            0 => (src[1], src[2]),
+                            1 => (src[0], src[2]),
+                            _ => (src[0], src[1]),
+                        };
+                        for i in 0..nrows {
+                            gdst[i] = dsrc[i] * o0[i] * o1[i];
+                        }
+                    }
+                }
+            }
+        }
+
+        // Advance the odometer; the last dimension varies fastest.
+        for d in (0..dims).rev() {
+            multi_idx[d] += 1;
+            if multi_idx[d] < interpolation_order {
+                break;
+            }
+            multi_idx[d] = 0;
         }
     }
 
@@ -1007,4 +1048,195 @@ pub fn scale_cheb_nodes_to_cell(
     });
 
     scaled_cheb_nodes
+}
+
+#[cfg(test)]
+mod approximation_coefficient_tests {
+    use super::*;
+
+    /// The tensor-product expansion exactly as it was written before the
+    /// loop-order/index-hoisting rewrite. Kept verbatim so the optimised version
+    /// can be held to bit-for-bit equality rather than a tolerance.
+    fn reference_expansion(
+        interpolation_order: usize,
+        one_d_transfer_coefficients: &[Mat<f64>],
+        one_d_derivative_coefficients: Option<&Vec<Mat<f64>>>,
+        dims: usize,
+        nrows: usize,
+        evaluate_gradients: bool,
+    ) -> (Mat<f64>, Option<Mat<f64>>) {
+        let num_columns = interpolation_order.pow(dims as u32);
+        let mut transfer_coefficients = Mat::<f64>::zeros(nrows, num_columns);
+        let mut gradient_coefficients =
+            evaluate_gradients.then(|| Mat::<f64>::zeros(nrows, num_columns * dims));
+
+        let mut multi_idx = [0usize; 3];
+        for i in 0..nrows {
+            for col in 0..num_columns {
+                let mut rem = col;
+                for d in (0..dims).rev() {
+                    multi_idx[d] = rem % interpolation_order;
+                    rem /= interpolation_order;
+                }
+
+                let mut v = 1.0;
+                for d in 0..dims {
+                    v *= one_d_transfer_coefficients[d][(i, multi_idx[d])];
+                }
+                transfer_coefficients[(i, col)] = v;
+
+                if let Some(ref mut grads) = gradient_coefficients {
+                    let derivs = one_d_derivative_coefficients.unwrap();
+                    for g in 0..dims {
+                        let mut v = derivs[g][(i, multi_idx[g])];
+                        for d in 0..dims {
+                            if d != g {
+                                v *= one_d_transfer_coefficients[d][(i, multi_idx[d])];
+                            }
+                        }
+                        grads[(i, g * num_columns + col)] = v;
+                    }
+                }
+            }
+        }
+        (transfer_coefficients, gradient_coefficients)
+    }
+
+    /// Rebuilds the 1-D coefficient matrices the same way
+    /// `get_approximation_coefficients` does, so the reference expansion above
+    /// consumes byte-identical inputs.
+    fn one_d_coefficients(
+        interpolation_order: usize,
+        cell_point_locations: &mut Mat<f64>,
+        center: &Vec<f64>,
+        length: &f64,
+        polynomial_nodes: &Mat<f64>,
+        dimensions: &usize,
+        evaluate_gradients: bool,
+    ) -> (Vec<Mat<f64>>, Option<Vec<Mat<f64>>>) {
+        cell_point_locations.row_iter_mut().for_each(|row| {
+            row.iter_mut().enumerate().for_each(|(idx, element)| {
+                *element = (*element - center[idx]) / (length * 0.5);
+            });
+        });
+
+        let mut transfer = Vec::with_capacity(*dimensions);
+        let mut derivative: Option<Vec<Mat<f64>>> =
+            evaluate_gradients.then(|| Vec::with_capacity(*dimensions));
+
+        for d in 0..*dimensions {
+            let column_vec = cell_point_locations.col_as_slice(d);
+            if evaluate_gradients {
+                let (tn_x, dtn_x) = evaluate_chebyshev_polynomials(
+                    interpolation_order,
+                    cell_point_locations.nrows(),
+                    column_vec,
+                    true,
+                );
+                let sn = calculate_sn(tn_x, polynomial_nodes, interpolation_order);
+                let mut dsn_dx =
+                    calculate_dsn_dx(dtn_x.unwrap(), polynomial_nodes, interpolation_order);
+                dsn_dx
+                    .col_iter_mut()
+                    .for_each(|col| col.iter_mut().for_each(|v| *v *= 2.0 / *length));
+                transfer.push(sn);
+                derivative.as_mut().unwrap().push(dsn_dx);
+            } else {
+                let (tn_x, _) = evaluate_chebyshev_polynomials(
+                    interpolation_order,
+                    cell_point_locations.nrows(),
+                    column_vec,
+                    false,
+                );
+                transfer.push(calculate_sn(tn_x, polynomial_nodes, interpolation_order));
+            }
+        }
+        (transfer, derivative)
+    }
+
+    #[test]
+    fn approximation_coefficients_are_bit_identical_to_reference() {
+        let mut compared = 0usize;
+
+        for dims in 1usize..=3 {
+            for &order in &[2usize, 3, 5, 7, 9, 11] {
+                for &npts in &[1usize, 7, 64, 256] {
+                    for &grads in &[false, true] {
+                        let center: Vec<f64> = (0..dims).map(|d| 0.25 + d as f64 * 0.1).collect();
+                        let length = 0.6f64;
+                        let make_points = || {
+                            Mat::<f64>::from_fn(npts, dims, |i, j| {
+                                center[j] + (length * 0.5) * ((i * 37 + j * 11) as f64).sin() * 0.98
+                            })
+                        };
+                        let (polynomial_nodes, _) = evaluate_chebyshev_polynomials(
+                            order,
+                            order,
+                            &generate_chebyshev_nodes(&order),
+                            false,
+                        );
+
+                        let mut pts_opt = make_points();
+                        let got = get_approximation_coefficients(
+                            order,
+                            &mut pts_opt,
+                            &center,
+                            &length,
+                            &polynomial_nodes,
+                            &dims,
+                            grads,
+                        );
+
+                        let mut pts_ref = make_points();
+                        let (onedt, onedd) = one_d_coefficients(
+                            order,
+                            &mut pts_ref,
+                            &center,
+                            &length,
+                            &polynomial_nodes,
+                            &dims,
+                            grads,
+                        );
+                        let (want_values, want_grads) =
+                            reference_expansion(order, &onedt, onedd.as_ref(), dims, npts, grads);
+
+                        assert_eq!(got.values.shape(), want_values.shape());
+                        for i in 0..npts {
+                            for j in 0..want_values.ncols() {
+                                assert_eq!(
+                                    got.values[(i, j)].to_bits(),
+                                    want_values[(i, j)].to_bits(),
+                                    "values differ at ({i},{j}) for dims={dims} order={order} npts={npts}"
+                                );
+                                compared += 1;
+                            }
+                        }
+
+                        match (got.gradients.as_ref(), want_grads.as_ref()) {
+                            (Some(g), Some(w)) => {
+                                assert_eq!(g.shape(), w.shape());
+                                for i in 0..npts {
+                                    for j in 0..w.ncols() {
+                                        assert_eq!(
+                                            g[(i, j)].to_bits(),
+                                            w[(i, j)].to_bits(),
+                                            "gradients differ at ({i},{j}) for dims={dims} order={order} npts={npts}"
+                                        );
+                                        compared += 1;
+                                    }
+                                }
+                            }
+                            (None, None) => {}
+                            _ => panic!("gradient presence mismatch"),
+                        }
+                    }
+                }
+            }
+        }
+
+        assert!(
+            compared > 1_000_000,
+            "expected a broad sweep, compared {compared}"
+        );
+    }
 }

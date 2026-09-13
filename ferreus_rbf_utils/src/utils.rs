@@ -227,29 +227,84 @@ where
     extents
 }
 
+/// Squared euclidean distance between two points.
+///
+/// Specialised for the 1-3 dimensional cases the FMM actually runs. The generic
+/// loop below cannot be unrolled, because `RowRef` carries its length at run
+/// time, which leaves every kernel evaluation on a scalar two-load-per-axis
+/// path. The specialised arms sum in the same order as the generic loop
+/// (`0.0 + d0*d0` is exact for any `d0`), so results are bit-for-bit identical.
 #[inline(always)]
 pub(crate) fn distance_sq(target: RowRef<f64>, source: RowRef<f64>) -> f64 {
-    let mut dist = 0.0;
-    for (t, s) in target.iter().zip(source.iter()) {
-        let diff = t - s;
-        dist += diff * diff;
+    match target.ncols().min(source.ncols()) {
+        1 => {
+            let d0 = target[0] - source[0];
+            d0 * d0
+        }
+        2 => {
+            let d0 = target[0] - source[0];
+            let d1 = target[1] - source[1];
+            d0 * d0 + d1 * d1
+        }
+        3 => {
+            let d0 = target[0] - source[0];
+            let d1 = target[1] - source[1];
+            let d2 = target[2] - source[2];
+            d0 * d0 + d1 * d1 + d2 * d2
+        }
+        _ => {
+            let mut dist = 0.0;
+            for (t, s) in target.iter().zip(source.iter()) {
+                let diff = t - s;
+                dist += diff * diff;
+            }
+            dist
+        }
     }
-    dist
 }
 
+/// Writes the component-wise difference into `diff_out` and returns the squared
+/// distance. Specialised for 1-3 dimensions for the same reason as
+/// [`distance_sq`], and likewise bit-for-bit identical to the generic loop.
 #[inline(always)]
 pub(crate) fn fill_diff_and_distance_sq(
     target: RowRef<f64>,
     source: RowRef<f64>,
     diff_out: &mut [f64],
 ) -> f64 {
-    let mut dist = 0.0;
-    for (d, (t, s)) in diff_out.iter_mut().zip(target.iter().zip(source.iter())) {
-        let diff = t - s;
-        *d = diff;
-        dist += diff * diff;
+    let n = diff_out.len().min(target.ncols()).min(source.ncols());
+    match n {
+        1 => {
+            let d0 = target[0] - source[0];
+            diff_out[0] = d0;
+            d0 * d0
+        }
+        2 => {
+            let d0 = target[0] - source[0];
+            let d1 = target[1] - source[1];
+            diff_out[0] = d0;
+            diff_out[1] = d1;
+            d0 * d0 + d1 * d1
+        }
+        3 => {
+            let d0 = target[0] - source[0];
+            let d1 = target[1] - source[1];
+            let d2 = target[2] - source[2];
+            diff_out[0] = d0;
+            diff_out[1] = d1;
+            diff_out[2] = d2;
+            d0 * d0 + d1 * d1 + d2 * d2
+        }
+        _ => {
+            let mut dist = 0.0;
+            for (d, (t, s)) in diff_out.iter_mut().zip(target.iter().zip(source.iter())) {
+                let diff = t - s;
+                *d = diff;
+                dist += diff * diff;
+            }
+            dist
+        }
     }
-    dist
 }
 
 #[inline(always)]
@@ -575,4 +630,353 @@ for_each_kernel! {
         (OneOverR2,          crate::kernels::OneOverR2Kernel),
         (OneOverR4,          crate::kernels::OneOverR4Kernel),
     ]
+}
+
+#[cfg(test)]
+mod distance_specialisation_tests {
+    use super::{distance_sq, fill_diff_and_distance_sq};
+    use faer::Mat;
+
+    /// `distance_sq` exactly as it was written before being specialised for 1-3
+    /// dimensions, so the specialisation can be held to bit-for-bit equality.
+    fn reference_distance_sq(target: faer::RowRef<f64>, source: faer::RowRef<f64>) -> f64 {
+        let mut dist = 0.0;
+        for (t, s) in target.iter().zip(source.iter()) {
+            let diff = t - s;
+            dist += diff * diff;
+        }
+        dist
+    }
+
+    fn reference_fill_diff(
+        target: faer::RowRef<f64>,
+        source: faer::RowRef<f64>,
+        diff_out: &mut [f64],
+    ) -> f64 {
+        let mut dist = 0.0;
+        for (d, (t, s)) in diff_out.iter_mut().zip(target.iter().zip(source.iter())) {
+            let diff = t - s;
+            *d = diff;
+            dist += diff * diff;
+        }
+        dist
+    }
+
+    /// Spans ordinary values, near-coincident points (where the subtraction
+    /// cancels), zeros, signed zeros, and very large and very small magnitudes.
+    fn probe_values() -> Vec<f64> {
+        vec![
+            0.0,
+            -0.0,
+            1.0,
+            -1.0,
+            0.1,
+            1e-300,
+            -1e-300,
+            1e300,
+            -1e300,
+            f64::MIN_POSITIVE,
+            1.0 + f64::EPSILON,
+            1.0 - f64::EPSILON / 2.0,
+            123456.789,
+            -987654.321,
+            std::f64::consts::PI,
+        ]
+    }
+
+    #[test]
+    fn distance_helpers_are_bit_identical_to_reference() {
+        let probes = probe_values();
+        let mut compared = 0usize;
+
+        for dims in 1usize..=4 {
+            // Exhaustive over the probe set for dim 1-2, sampled for 3-4.
+            let step = if dims <= 2 { 1 } else { 2 };
+            for a in (0..probes.len()).step_by(step) {
+                for b in (0..probes.len()).step_by(step) {
+                    let target =
+                        Mat::<f64>::from_fn(1, dims, |_, j| probes[(a + j) % probes.len()]);
+                    let source =
+                        Mat::<f64>::from_fn(1, dims, |_, j| probes[(b + j * 3) % probes.len()]);
+                    let (t, s) = (target.row(0), source.row(0));
+
+                    let got = distance_sq(t, s);
+                    let want = reference_distance_sq(t, s);
+                    assert_eq!(
+                        got.to_bits(),
+                        want.to_bits(),
+                        "distance_sq differs for dims={dims} a={a} b={b}: {got} vs {want}"
+                    );
+                    compared += 1;
+
+                    let mut got_diff = vec![0.0f64; dims];
+                    let mut want_diff = vec![0.0f64; dims];
+                    let got_d = fill_diff_and_distance_sq(t, s, &mut got_diff);
+                    let want_d = reference_fill_diff(t, s, &mut want_diff);
+                    assert_eq!(
+                        got_d.to_bits(),
+                        want_d.to_bits(),
+                        "fill_diff_and_distance_sq distance differs for dims={dims}"
+                    );
+                    for k in 0..dims {
+                        assert_eq!(
+                            got_diff[k].to_bits(),
+                            want_diff[k].to_bits(),
+                            "fill_diff_and_distance_sq component {k} differs for dims={dims}"
+                        );
+                    }
+                    compared += 1;
+                }
+            }
+        }
+
+        assert!(
+            compared > 500,
+            "expected a broad sweep, compared {compared}"
+        );
+    }
+
+    /// Near-coincident points are the case the specialisation could plausibly
+    /// break, since the subtraction cancels almost completely.
+    #[test]
+    fn distance_helpers_bit_identical_for_near_coincident_points() {
+        for dims in 1usize..=3 {
+            for scale in [1e-16f64, 1e-12, 1e-8, 1e-4] {
+                for i in 0..64 {
+                    let base = 0.3 + i as f64 * 0.01;
+                    let target = Mat::<f64>::from_fn(1, dims, |_, j| base + j as f64 * 0.7);
+                    let source = Mat::<f64>::from_fn(1, dims, |_, j| {
+                        base + j as f64 * 0.7 + scale * ((i + j) as f64).sin()
+                    });
+                    let (t, s) = (target.row(0), source.row(0));
+                    assert_eq!(
+                        distance_sq(t, s).to_bits(),
+                        reference_distance_sq(t, s).to_bits(),
+                        "distance_sq differs at scale {scale} dims {dims}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod evaluate_from_distance_sq_tests {
+    use crate::kernels::*;
+    use faer::Mat;
+    use ferreus_bbfmm::KernelFunction;
+
+    /// Holds a kernel to the contract on
+    /// [`KernelFunction::evaluate_from_distance_sq`]: for any point pair, feeding
+    /// the pair's squared distance to it must reproduce `evaluate` bit-for-bit.
+    fn assert_contract<K: KernelFunction>(kernel: &K, name: &str) -> usize {
+        let mut checked = 0usize;
+
+        // Separations spanning coincident points, the denormal range, the scales
+        // where a piecewise kernel switches branch, and the far field.
+        let mut separations: Vec<f64> = vec![0.0, f64::MIN_POSITIVE, 1e-300, 1e-30];
+        // Dense geometric sweep, so every internal branch boundary is crossed
+        // from both sides rather than stepped over.
+        let mut x = 1e-12f64;
+        while x < 1e6 {
+            separations.push(x);
+            x *= 1.07;
+        }
+
+        for dims in 1usize..=3 {
+            for &sep in &separations {
+                // Spread the separation across the axes so r2 is a genuine sum.
+                let target = Mat::<f64>::from_fn(1, dims, |_, j| 0.3 + j as f64 * 1.7);
+                let source = Mat::<f64>::from_fn(1, dims, |_, j| {
+                    0.3 + j as f64 * 1.7 + sep / (dims as f64).sqrt()
+                });
+                let (t, s) = (target.row(0), source.row(0));
+
+                let direct = kernel.evaluate(t, s);
+                let r2 = crate::utils::distance_sq(t, s);
+                let from_r2 = kernel
+                    .evaluate_from_distance_sq(r2)
+                    .unwrap_or_else(|| panic!("{name} returned None"));
+
+                assert_eq!(
+                    from_r2.to_bits(),
+                    direct.to_bits(),
+                    "{name}: evaluate_from_distance_sq({r2:e}) = {from_r2} but \
+                     evaluate = {direct} (dims={dims}, separation={sep:e})"
+                );
+                checked += 1;
+            }
+        }
+        checked
+    }
+
+    #[test]
+    fn every_kernel_matches_evaluate_bit_for_bit() {
+        let mut total = 0usize;
+
+        total += assert_contract(&LinearRbfKernel, "LinearRbf");
+        total += assert_contract(&ThinPlateSplineRbfKernel, "ThinPlateSplineRbf");
+        total += assert_contract(&CubicRbfKernel, "CubicRbf");
+        total += assert_contract(&WendlandsC2RbfKernel, "WendlandsC2Rbf");
+        total += assert_contract(&SphericalRbfKernel, "SphericalRbf");
+        total += assert_contract(&ExponentialRbfKernel, "ExponentialRbf");
+        total += assert_contract(&GaussianRbfKernel, "GaussianRbf");
+        total += assert_contract(&Cubic2RbfKernel, "Cubic2Rbf");
+        total += assert_contract(&InverseMultiquadraticRbfKernel, "InverseMultiquadraticRbf");
+        total += assert_contract(&LaplacianKernel, "Laplacian");
+        total += assert_contract(&OneOverR2Kernel, "OneOverR2");
+        total += assert_contract(&OneOverR4Kernel, "OneOverR4");
+
+        // The spheroidal family evaluates from r2 directly and has a near/far
+        // branch, so sweep several ranges and sills as well as all four orders.
+        for &base_range in &[0.05f64, 1.0, 7.5, 250.0] {
+            for &sill in &[0.5f64, 1.0, 12.0] {
+                total += assert_contract(
+                    &Spheroidal3RbfKernel::new(base_range, sill),
+                    "Spheroidal3Rbf",
+                );
+                total += assert_contract(
+                    &Spheroidal5RbfKernel::new(base_range, sill),
+                    "Spheroidal5Rbf",
+                );
+                total += assert_contract(
+                    &Spheroidal7RbfKernel::new(base_range, sill),
+                    "Spheroidal7Rbf",
+                );
+                total += assert_contract(
+                    &Spheroidal9RbfKernel::new(base_range, sill),
+                    "Spheroidal9Rbf",
+                );
+            }
+        }
+
+        assert!(total > 20_000, "expected a broad sweep, checked {total}");
+    }
+}
+
+#[cfg(test)]
+mod value_and_gradient_from_distance_sq_tests {
+    use crate::kernels::*;
+    use faer::Mat;
+    use ferreus_bbfmm::KernelFunction;
+
+    /// Holds a kernel to the contract on
+    /// [`KernelFunction::value_and_gradient_from_distance_sq`]: the value must
+    /// match `evaluate_value_gradient`, and applying the returned scaling to
+    /// `target - source` must reproduce its `gradient_out`, bit-for-bit.
+    fn assert_contract<K: KernelFunction>(kernel: &K, name: &str) -> usize {
+        let mut checked = 0usize;
+
+        let mut separations: Vec<f64> = vec![0.0, f64::MIN_POSITIVE, 1e-300, 1e-30, 1e-9];
+        let mut x = 1e-12f64;
+        while x < 1e6 {
+            separations.push(x);
+            x *= 1.09;
+        }
+
+        for dims in 1usize..=3 {
+            for &sep in &separations {
+                // Both signs of the difference, so the -0.0 case is exercised:
+                // the coincident-point branch must write +0.0 even when the
+                // difference is negative.
+                for &sign in &[1.0f64, -1.0] {
+                    let target = Mat::<f64>::from_fn(1, dims, |_, j| 0.3 + j as f64 * 1.7);
+                    let source = Mat::<f64>::from_fn(1, dims, |_, j| {
+                        0.3 + j as f64 * 1.7 + sign * sep / (dims as f64).sqrt()
+                    });
+                    let (t, s) = (target.row(0), source.row(0));
+
+                    let mut want_grad = vec![0.0f64; dims];
+                    let want_value = match kernel.evaluate_value_gradient(t, s, &mut want_grad) {
+                        Some(v) => v,
+                        None => return checked, // kernel has no gradient at all
+                    };
+
+                    let r2 = crate::utils::distance_sq(t, s);
+                    let (got_value, scale) = kernel
+                        .value_and_gradient_from_distance_sq(r2)
+                        .unwrap_or_else(|| panic!("{name} returned None but has gradients"));
+
+                    assert_eq!(
+                        got_value.to_bits(),
+                        want_value.to_bits(),
+                        "{name}: value mismatch at r2={r2:e} (dims={dims}, sep={sep:e}, sign={sign})"
+                    );
+
+                    for d in 0..dims {
+                        let difference = t[d] - s[d];
+                        let got = scale.apply(difference);
+                        assert_eq!(
+                            got.to_bits(),
+                            want_grad[d].to_bits(),
+                            "{name}: gradient component {d} mismatch at r2={r2:e} \
+                             (dims={dims}, sep={sep:e}, sign={sign}): {got} vs {}",
+                            want_grad[d]
+                        );
+                    }
+                    checked += 1;
+                }
+            }
+        }
+        checked
+    }
+
+    #[test]
+    fn every_gradient_kernel_matches_evaluate_value_gradient_bit_for_bit() {
+        let mut total = 0usize;
+
+        total += assert_contract(&LinearRbfKernel, "LinearRbf");
+        total += assert_contract(&ThinPlateSplineRbfKernel, "ThinPlateSplineRbf");
+        total += assert_contract(&CubicRbfKernel, "CubicRbf");
+        total += assert_contract(&LaplacianKernel, "Laplacian");
+        total += assert_contract(&OneOverR2Kernel, "OneOverR2");
+        total += assert_contract(&OneOverR4Kernel, "OneOverR4");
+
+        for &base_range in &[0.05f64, 1.0, 7.5, 250.0] {
+            for &sill in &[0.5f64, 1.0, 12.0] {
+                total += assert_contract(&Spheroidal3RbfKernel::new(base_range, sill), "Sph3");
+                total += assert_contract(&Spheroidal5RbfKernel::new(base_range, sill), "Sph5");
+                total += assert_contract(&Spheroidal7RbfKernel::new(base_range, sill), "Sph7");
+                total += assert_contract(&Spheroidal9RbfKernel::new(base_range, sill), "Sph9");
+            }
+        }
+
+        assert!(total > 20_000, "expected a broad sweep, checked {total}");
+    }
+
+    /// Kernels without gradients must keep returning `None`, so callers stay on
+    /// the scalar path rather than silently getting a wrong gradient.
+    #[test]
+    fn non_gradient_kernels_return_none() {
+        assert!(
+            WendlandsC2RbfKernel
+                .value_and_gradient_from_distance_sq(1.0)
+                .is_none()
+        );
+        assert!(
+            SphericalRbfKernel
+                .value_and_gradient_from_distance_sq(1.0)
+                .is_none()
+        );
+        assert!(
+            ExponentialRbfKernel
+                .value_and_gradient_from_distance_sq(1.0)
+                .is_none()
+        );
+        assert!(
+            GaussianRbfKernel
+                .value_and_gradient_from_distance_sq(1.0)
+                .is_none()
+        );
+        assert!(
+            Cubic2RbfKernel
+                .value_and_gradient_from_distance_sq(1.0)
+                .is_none()
+        );
+        assert!(
+            InverseMultiquadraticRbfKernel
+                .value_and_gradient_from_distance_sq(1.0)
+                .is_none()
+        );
+    }
 }
