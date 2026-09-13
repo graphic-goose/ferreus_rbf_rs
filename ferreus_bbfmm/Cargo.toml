@@ -12,6 +12,8 @@ rust-version = "1.97.1"
 
 [lib]
 crate-type = ["lib"]
+# The library itself defines no benchmarks; benchmarks live in `benches/`.
+bench = false
 
 [dependencies]
 faer.workspace = true
@@ -21,9 +23,11 @@ itertools = "0.14.0"
 [dev-dependencies]
 csv = "1.4.0"
 rand = "0.9.2"
+criterion.workspace = true
 
-[profile.dev.package.faer]
-opt-level = 3
+[[bench]]
+name = "fmm"
+harness = false
 
 [package.metadata.docs.rs]
 rustdoc-args = [

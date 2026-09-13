@@ -13,7 +13,7 @@ use crate::{
     utils::{fill_diff_and_distance_sq, scale_in_place},
 };
 use faer::RowRef;
-use ferreus_bbfmm::KernelFunction;
+use ferreus_bbfmm::{GradientScale, KernelFunction};
 
 /// Laplacian-like kernel with `phi(r) = 1 / r` away from the origin.
 #[derive(Clone, Debug, Copy)]
@@ -36,6 +36,13 @@ impl KernelFunction for LaplacianKernel {
         self.phi(r)
     }
 
+    /// `evaluate` is `phi(distance_sq(..).sqrt())`, so taking the root here
+    /// reproduces it exactly.
+    #[inline(always)]
+    fn evaluate_from_distance_sq(&self, r2: f64) -> Option<f64> {
+        Some(self.phi(r2.sqrt()))
+    }
+
     #[inline(always)]
     fn evaluate_value_gradient(
         &self,
@@ -54,6 +61,16 @@ impl KernelFunction for LaplacianKernel {
         let inv_r3 = inv_r * inv_r * inv_r;
         scale_in_place(gradient_out, -inv_r3);
         Some(inv_r)
+    }
+
+    #[inline(always)]
+    fn value_and_gradient_from_distance_sq(&self, r2: f64) -> Option<(f64, GradientScale)> {
+        if r2 <= f64::EPSILON {
+            return Some((0.0, GradientScale::Zero));
+        }
+        let inv_r = 1.0 / r2.sqrt();
+        let inv_r3 = inv_r * inv_r * inv_r;
+        Some((inv_r, GradientScale::Scale(-inv_r3)))
     }
 }
 
@@ -85,6 +102,13 @@ impl KernelFunction for OneOverR2Kernel {
         self.phi(r)
     }
 
+    /// `evaluate` is `phi(distance_sq(..).sqrt())`, so taking the root here
+    /// reproduces it exactly.
+    #[inline(always)]
+    fn evaluate_from_distance_sq(&self, r2: f64) -> Option<f64> {
+        Some(self.phi(r2.sqrt()))
+    }
+
     #[inline(always)]
     fn evaluate_value_gradient(
         &self,
@@ -104,6 +128,15 @@ impl KernelFunction for OneOverR2Kernel {
             *g *= -2.0 * inv_r4;
         }
         Some(1.0 / r2)
+    }
+
+    #[inline(always)]
+    fn value_and_gradient_from_distance_sq(&self, r2: f64) -> Option<(f64, GradientScale)> {
+        if r2 <= f64::EPSILON {
+            return Some((0.0, GradientScale::Zero));
+        }
+        let inv_r4 = 1.0 / (r2 * r2);
+        Some((1.0 / r2, GradientScale::Scale(-2.0 * inv_r4)))
     }
 }
 
@@ -135,6 +168,13 @@ impl KernelFunction for OneOverR4Kernel {
         self.phi(r)
     }
 
+    /// `evaluate` is `phi(distance_sq(..).sqrt())`, so taking the root here
+    /// reproduces it exactly.
+    #[inline(always)]
+    fn evaluate_from_distance_sq(&self, r2: f64) -> Option<f64> {
+        Some(self.phi(r2.sqrt()))
+    }
+
     #[inline(always)]
     fn evaluate_value_gradient(
         &self,
@@ -152,6 +192,15 @@ impl KernelFunction for OneOverR4Kernel {
         let inv_r6 = 1.0 / (r2 * r2 * r2);
         scale_in_place(gradient_out, -4.0 * inv_r6);
         Some(1.0 / (r2 * r2))
+    }
+
+    #[inline(always)]
+    fn value_and_gradient_from_distance_sq(&self, r2: f64) -> Option<(f64, GradientScale)> {
+        if r2 <= f64::EPSILON {
+            return Some((0.0, GradientScale::Zero));
+        }
+        let inv_r6 = 1.0 / (r2 * r2 * r2);
+        Some((1.0 / (r2 * r2), GradientScale::Scale(-4.0 * inv_r6)))
     }
 }
 

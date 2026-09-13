@@ -12,6 +12,8 @@ rust-version = "1.97.1"
 
 [lib]
 crate-type = ["lib"]
+# The library itself defines no benchmarks; benchmarks live in `benches/`.
+bench = false
 
 [dependencies]
 csv = "1.4.0"
@@ -30,11 +32,20 @@ serde = { version = "1.0.228", features = ["derive", "rc"] }
 [target.'cfg(windows)'.dependencies]
 gdt-cpus = { version = "0.2606.1", default-features = false }
 
-[profile.dev]
-opt-level = 3
+[dev-dependencies]
+criterion.workspace = true
 
-[profile.dev.package.faer]
-opt-level = 3
+[[bench]]
+name = "fit"
+harness = false
+
+[[bench]]
+name = "evaluate"
+harness = false
+
+[[bench]]
+name = "isosurface"
+harness = false
 
 [package.metadata.docs.rs]
 rustdoc-args = [

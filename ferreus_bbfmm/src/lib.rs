@@ -313,5 +313,5 @@ mod utils;
 #[doc(inline)]
 pub use {
     bbfmm::{FmmError, FmmParams, FmmTree, M2LCompressionType},
-    traits::KernelFunction,
+    traits::{GradientScale, KernelFunction},
 };

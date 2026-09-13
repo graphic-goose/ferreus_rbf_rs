@@ -12,14 +12,21 @@ rust-version = "1.97.1"
 
 [lib]
 crate-type = ["lib"]
+# The library itself defines no benchmarks; benchmarks live in `benches/`.
+bench = false
 
 [dependencies]
 faer.workspace = true
 serde = { version = "1.0.228", features = ["derive", "rc"] }
 ferreus_bbfmm = {path = "../ferreus_bbfmm", version = "0.3.0"}
 
-[profile.dev.package.faer]
-opt-level = 3
+[dev-dependencies]
+criterion.workspace = true
+rand = "0.9.2"
+
+[[bench]]
+name = "kernels"
+harness = false
 
 [package.metadata.docs.rs]
 rustdoc-args = [

@@ -17,7 +17,7 @@ use crate::{
     utils::{distance_sq, fill_diff_and_distance_sq, scale_in_place},
 };
 use faer::RowRef;
-use ferreus_bbfmm::KernelFunction;
+use ferreus_bbfmm::{GradientScale, KernelFunction};
 use std::marker::PhantomData;
 
 /// Linear RBF kernel with `phi(r) = -r`.
@@ -38,6 +38,13 @@ impl KernelFunction for LinearRbfKernel {
         self.phi(r)
     }
 
+    /// `evaluate` is `phi(distance_sq(..).sqrt())`, so taking the root here
+    /// reproduces it exactly.
+    #[inline(always)]
+    fn evaluate_from_distance_sq(&self, r2: f64) -> Option<f64> {
+        Some(self.phi(r2.sqrt()))
+    }
+
     #[inline(always)]
     fn evaluate_value_gradient(
         &self,
@@ -54,6 +61,15 @@ impl KernelFunction for LinearRbfKernel {
         let r = r2.sqrt();
         scale_in_place(gradient_out, -1.0 / r);
         Some(-r)
+    }
+
+    #[inline(always)]
+    fn value_and_gradient_from_distance_sq(&self, r2: f64) -> Option<(f64, GradientScale)> {
+        if r2 <= f64::EPSILON {
+            return Some((-r2.sqrt(), GradientScale::Zero));
+        }
+        let r = r2.sqrt();
+        Some((-r, GradientScale::Scale(-1.0 / r)))
     }
 }
 
@@ -85,6 +101,13 @@ impl KernelFunction for ThinPlateSplineRbfKernel {
         self.phi(r)
     }
 
+    /// `evaluate` is `phi(distance_sq(..).sqrt())`, so taking the root here
+    /// reproduces it exactly.
+    #[inline(always)]
+    fn evaluate_from_distance_sq(&self, r2: f64) -> Option<f64> {
+        Some(self.phi(r2.sqrt()))
+    }
+
     #[inline(always)]
     fn evaluate_value_gradient(
         &self,
@@ -103,6 +126,15 @@ impl KernelFunction for ThinPlateSplineRbfKernel {
         let factor = 2.0 * r.ln() + 1.0;
         scale_in_place(gradient_out, factor);
         Some(r2 * r.ln())
+    }
+
+    #[inline(always)]
+    fn value_and_gradient_from_distance_sq(&self, r2: f64) -> Option<(f64, GradientScale)> {
+        if r2 <= f64::EPSILON {
+            return Some((0.0, GradientScale::Zero));
+        }
+        let r = r2.sqrt();
+        Some((r2 * r.ln(), GradientScale::Scale(2.0 * r.ln() + 1.0)))
     }
 }
 
@@ -131,6 +163,13 @@ impl KernelFunction for CubicRbfKernel {
         self.phi(r)
     }
 
+    /// `evaluate` is `phi(distance_sq(..).sqrt())`, so taking the root here
+    /// reproduces it exactly.
+    #[inline(always)]
+    fn evaluate_from_distance_sq(&self, r2: f64) -> Option<f64> {
+        Some(self.phi(r2.sqrt()))
+    }
+
     #[inline(always)]
     fn evaluate_value_gradient(
         &self,
@@ -149,6 +188,15 @@ impl KernelFunction for CubicRbfKernel {
         let factor = 3.0 * r;
         scale_in_place(gradient_out, factor);
         Some(r2 * r)
+    }
+
+    #[inline(always)]
+    fn value_and_gradient_from_distance_sq(&self, r2: f64) -> Option<(f64, GradientScale)> {
+        if r2 <= f64::EPSILON {
+            return Some((0.0, GradientScale::Zero));
+        }
+        let r = r2.sqrt();
+        Some((r2 * r, GradientScale::Scale(3.0 * r)))
     }
 }
 
@@ -269,6 +317,14 @@ impl<S: SpheroidalSpec> KernelFunction for SpheroidalRbfKernel<S> {
         self.eval_r2(r2)
     }
 
+    /// This kernel's `evaluate` works from the squared distance directly, so it
+    /// must NOT be routed through `phi(r2.sqrt())`: squaring the root does not
+    /// recover `r2` and the near/far branch in `eval_r2` could flip.
+    #[inline(always)]
+    fn evaluate_from_distance_sq(&self, r2: f64) -> Option<f64> {
+        Some(self.eval_r2(r2))
+    }
+
     #[inline(always)]
     fn evaluate_value_gradient(
         &self,
@@ -297,6 +353,28 @@ impl<S: SpheroidalSpec> KernelFunction for SpheroidalRbfKernel<S> {
         let factor = -2.0 * p * self.s2 * self.far_coef / denom;
         scale_in_place(gradient_out, factor);
         Some(self.eval_r2(r2))
+    }
+
+    #[inline(always)]
+    fn value_and_gradient_from_distance_sq(&self, r2: f64) -> Option<(f64, GradientScale)> {
+        if r2 <= f64::EPSILON {
+            return Some((self.eval_r2(r2), GradientScale::Zero));
+        }
+        let sr2 = self.s2 * r2;
+        if sr2 <= self.ip2 {
+            let inv_r = 1.0 / r2.sqrt();
+            return Some((
+                self.eval_r2(r2),
+                GradientScale::Scale(-self.near_slope * inv_r),
+            ));
+        }
+        let t = 1.0 + sr2;
+        let p = S::POW as f64 + 0.5;
+        let denom = t.powf(p + 1.0);
+        Some((
+            self.eval_r2(r2),
+            GradientScale::Scale(-2.0 * p * self.s2 * self.far_coef / denom),
+        ))
     }
 }
 
@@ -339,6 +417,13 @@ impl KernelFunction for WendlandsC2RbfKernel {
         let r = crate::get_distance(target, source);
         self.phi(r)
     }
+
+    /// `evaluate` is `phi(distance_sq(..).sqrt())`, so taking the root here
+    /// reproduces it exactly.
+    #[inline(always)]
+    fn evaluate_from_distance_sq(&self, r2: f64) -> Option<f64> {
+        Some(self.phi(r2.sqrt()))
+    }
 }
 
 impl KernelFromParams for WendlandsC2RbfKernel {
@@ -368,6 +453,13 @@ impl KernelFunction for SphericalRbfKernel {
         let r = crate::get_distance(target, source);
         self.phi(r)
     }
+
+    /// `evaluate` is `phi(distance_sq(..).sqrt())`, so taking the root here
+    /// reproduces it exactly.
+    #[inline(always)]
+    fn evaluate_from_distance_sq(&self, r2: f64) -> Option<f64> {
+        Some(self.phi(r2.sqrt()))
+    }
 }
 
 impl KernelFromParams for SphericalRbfKernel {
@@ -394,6 +486,13 @@ impl KernelFunction for ExponentialRbfKernel {
         let r = crate::get_distance(target, source);
         self.phi(r)
     }
+
+    /// `evaluate` is `phi(distance_sq(..).sqrt())`, so taking the root here
+    /// reproduces it exactly.
+    #[inline(always)]
+    fn evaluate_from_distance_sq(&self, r2: f64) -> Option<f64> {
+        Some(self.phi(r2.sqrt()))
+    }
 }
 
 impl KernelFromParams for ExponentialRbfKernel {
@@ -419,6 +518,13 @@ impl KernelFunction for GaussianRbfKernel {
     fn evaluate(&self, target: RowRef<f64>, source: RowRef<f64>) -> f64 {
         let r = crate::get_distance(target, source);
         self.phi(r)
+    }
+
+    /// `evaluate` is `phi(distance_sq(..).sqrt())`, so taking the root here
+    /// reproduces it exactly.
+    #[inline(always)]
+    fn evaluate_from_distance_sq(&self, r2: f64) -> Option<f64> {
+        Some(self.phi(r2.sqrt()))
     }
 }
 
@@ -455,6 +561,13 @@ impl KernelFunction for Cubic2RbfKernel {
         let r = crate::get_distance(target, source);
         self.phi(r)
     }
+
+    /// `evaluate` is `phi(distance_sq(..).sqrt())`, so taking the root here
+    /// reproduces it exactly.
+    #[inline(always)]
+    fn evaluate_from_distance_sq(&self, r2: f64) -> Option<f64> {
+        Some(self.phi(r2.sqrt()))
+    }
 }
 
 impl KernelFromParams for Cubic2RbfKernel {
@@ -471,7 +584,7 @@ impl KernelFromParams for Cubic2RbfKernel {
 pub struct InverseMultiquadraticRbfKernel;
 
 impl InverseMultiquadraticRbfKernel {
-    const KM_SQ: f64 = 42.25;  // 6.5 ^ 2
+    const KM_SQ: f64 = 42.25; // 6.5 ^ 2
 
     #[inline(always)]
     pub fn phi(&self, r: f64) -> f64 {
@@ -484,6 +597,13 @@ impl KernelFunction for InverseMultiquadraticRbfKernel {
     fn evaluate(&self, target: RowRef<f64>, source: RowRef<f64>) -> f64 {
         let r = crate::get_distance(target, source);
         self.phi(r)
+    }
+
+    /// `evaluate` is `phi(distance_sq(..).sqrt())`, so taking the root here
+    /// reproduces it exactly.
+    #[inline(always)]
+    fn evaluate_from_distance_sq(&self, r2: f64) -> Option<f64> {
+        Some(self.phi(r2.sqrt()))
     }
 }
 

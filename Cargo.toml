@@ -13,3 +13,27 @@ members = [
 [workspace.dependencies]
 faer = "0.24.4"
 rayon = "1.11.0"
+criterion = { version = "0.8.2", features = ["html_reports"] }
+
+# NOTE: Cargo only honours profile sections in the *workspace root* manifest.
+# These were previously declared in the member manifests, where they were silently
+# ignored.
+
+# These crates are numerically heavy; unoptimised debug builds are unusably slow.
+[profile.dev]
+opt-level = 3
+
+[profile.dev.package.faer]
+opt-level = 3
+
+# `cargo bench` builds benchmarks with this profile. Keep debug info so that
+# `perf`, `samply` and friends can resolve symbols in benchmark binaries.
+[profile.bench]
+debug = true
+
+# Release-speed build that keeps full debug info, for profiling the examples
+# and Python extension modules: `cargo build --profile profiling`.
+[profile.profiling]
+inherits = "release"
+debug = true
+strip = "none"
