@@ -1269,59 +1269,41 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
                             grad_col1_ptr.unwrap_or(std::ptr::null_mut()),
                             grad_col2_ptr.unwrap_or(std::ptr::null_mut()),
                         ];
-                        for &target_idx in cell_target_indices {
-                            let mut target = [0.0f64; 3];
-                            for d in 0..dims {
-                                target[d] = *target_points.get(target_idx, d);
-                            }
-                            unsafe {
-                                let mut seed = utils::ValueAndGradient {
-                                    value: *value_ptr.add(target_idx),
-                                    gradient: [0.0; 3],
-                                };
-                                for d in 0..dims {
-                                    seed.gradient[d] = *grad_ptrs[d].add(target_idx);
-                                }
-                                let out = utils::accumulate_weighted_kernel_gradients(
-                                    &self.kernel,
-                                    &target,
-                                    &source_axes,
-                                    weights,
-                                    dims,
-                                    seed,
-                                );
-                                *value_ptr.add(target_idx) = out.value;
-                                for d in 0..dims {
-                                    *grad_ptrs[d].add(target_idx) = out.gradient[d];
-                                }
-                            }
+                        // Target indices here are distinct, and written by one task only.
+                        unsafe {
+                            utils::accumulate_weighted_kernel_gradients_for_targets(
+                                &self.kernel,
+                                target_points,
+                                cell_target_indices,
+                                &source_axes,
+                                weights,
+                                dims,
+                                value_ptr,
+                                grad_ptrs,
+                            );
                         }
                         continue;
                     }
 
                     // Values-only and a kernel that can work from a squared
-                    // distance: take the batched path, which forms a tile of
-                    // squared distances in one vectorisable pass. It folds the
+                    // distance: take the batched path, which advances several
+                    // targets at once. Each target still receives its
                     // contributions in source order onto the value already in the
                     // destination, so it is bit-identical to the scalar loop.
                     if !WITH_GRADS && batched {
                         let weights = u_cell_values.col_as_slice(rhs);
-                        for &target_idx in cell_target_indices {
-                            let mut target = [0.0f64; 3];
-                            for d in 0..dims {
-                                target[d] = *target_points.get(target_idx, d);
-                            }
-                            unsafe {
-                                let slot = value_ptr.add(target_idx);
-                                *slot = utils::accumulate_weighted_kernel(
-                                    &self.kernel,
-                                    &target,
-                                    &source_axes,
-                                    weights,
-                                    dims,
-                                    *slot,
-                                );
-                            }
+                        // Target indices within a leaf are distinct, and each
+                        // leaf's targets are written by one task only.
+                        unsafe {
+                            utils::accumulate_weighted_kernel_for_targets(
+                                &self.kernel,
+                                target_points,
+                                cell_target_indices,
+                                &source_axes,
+                                weights,
+                                dims,
+                                value_ptr,
+                            );
                         }
                         continue;
                     }
@@ -1441,32 +1423,18 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
                                 grad_col1_ptr.unwrap_or(std::ptr::null_mut()),
                                 grad_col2_ptr.unwrap_or(std::ptr::null_mut()),
                             ];
-                            for &target_idx in chunk_target_indices {
-                                let mut target = [0.0f64; 3];
-                                for d in 0..dims {
-                                    target[d] = *target_points.get(target_idx, d);
-                                }
-                                unsafe {
-                                    let mut seed = utils::ValueAndGradient {
-                                        value: *value_ptr.add(target_idx),
-                                        gradient: [0.0; 3],
-                                    };
-                                    for d in 0..dims {
-                                        seed.gradient[d] = *grad_ptrs[d].add(target_idx);
-                                    }
-                                    let out = utils::accumulate_weighted_kernel_gradients(
-                                        &self.kernel,
-                                        &target,
-                                        &node_axes,
-                                        weights,
-                                        dims,
-                                        seed,
-                                    );
-                                    *value_ptr.add(target_idx) = out.value;
-                                    for d in 0..dims {
-                                        *grad_ptrs[d].add(target_idx) = out.gradient[d];
-                                    }
-                                }
+                            // Target indices here are distinct, and written by one task only.
+                            unsafe {
+                                utils::accumulate_weighted_kernel_gradients_for_targets(
+                                    &self.kernel,
+                                    target_points,
+                                    chunk_target_indices,
+                                    &node_axes,
+                                    weights,
+                                    dims,
+                                    value_ptr,
+                                    grad_ptrs,
+                                );
                             }
                             continue;
                         }
@@ -1479,22 +1447,18 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
                                 .multipole_coefficients
                                 .col_as_slice(*w_cell_column_index + rhs * self.tree_lists.tree.len())
                                 [..scaled_cheb_nodes.nrows()];
-                            for &target_idx in chunk_target_indices {
-                                let mut target = [0.0f64; 3];
-                                for d in 0..dims {
-                                    target[d] = *target_points.get(target_idx, d);
-                                }
-                                unsafe {
-                                    let slot = value_ptr.add(target_idx);
-                                    *slot = utils::accumulate_weighted_kernel(
-                                        &self.kernel,
-                                        &target,
-                                        &node_axes,
-                                        weights,
-                                        dims,
-                                        *slot,
-                                    );
-                                }
+                            // Chunk target indices are distinct, and each chunk is
+                            // written by one task only.
+                            unsafe {
+                                utils::accumulate_weighted_kernel_for_targets(
+                                    &self.kernel,
+                                    target_points,
+                                    chunk_target_indices,
+                                    &node_axes,
+                                    weights,
+                                    dims,
+                                    value_ptr,
+                                );
                             }
                             continue;
                         }

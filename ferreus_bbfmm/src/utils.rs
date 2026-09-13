@@ -93,6 +93,11 @@ fn fill_kernel_column_impl<K>(
 /// in ascending source order starting from the `acc` passed in, so this performs
 /// exactly the sequence of additions the scalar loop does - including beginning
 /// from whatever the destination already held. The result is bit-identical.
+///
+/// Production code uses [`accumulate_weighted_kernel_for_targets`], which gives
+/// every target exactly these additions; this stays as the reference it is
+/// verified against.
+#[cfg(test)]
 #[inline(always)]
 fn accumulate_weighted_kernel_impl<K>(
     kernel_function: &K,
@@ -164,6 +169,136 @@ where
     acc
 }
 
+/// Number of targets [`accumulate_weighted_kernel_for_targets`] advances at once:
+/// one f64 lane of an AVX-512 register each.
+pub(crate) const TARGET_LANES: usize = 8;
+
+/// Accumulates `sum_s kernel(target_k, source_s) * weights[s]` onto `acc[k]` for
+/// [`TARGET_LANES`] targets at once.
+///
+/// Vectorising across sources, as [`accumulate_weighted_kernel_impl`] does, still
+/// leaves each target's sum on one scalar add chain, which bounds throughput at one
+/// addition latency per interaction. Here each target keeps its own accumulator and
+/// the vectorisation runs across targets instead. Every lane receives exactly the
+/// additions the single-target routine would give it, in the same ascending source
+/// order, and lanes never interact. That is an element-wise update rather than a
+/// reduction, so it vectorises without reassociating anything, and each target's
+/// result is bit-identical.
+#[inline(always)]
+fn accumulate_weighted_kernel_lanes_impl<K>(
+    kernel_function: &K,
+    targets: &[[f64; TARGET_LANES]; 3],
+    source_axes: &[&[f64]; 3],
+    weights: &[f64],
+    dims: usize,
+    acc: &mut [f64; TARGET_LANES],
+) where
+    K: KernelFunction,
+{
+    let n = weights.len();
+    // Local copies, so the accumulators can live in registers.
+    let mut sums = *acc;
+    let [tx, ty, tz] = *targets;
+
+    match dims {
+        1 => {
+            for (&ax, &wk) in source_axes[0][..n].iter().zip(weights) {
+                for k in 0..TARGET_LANES {
+                    let d0 = tx[k] - ax;
+                    let v = kernel_function
+                        .evaluate_from_distance_sq(d0 * d0)
+                        .expect("batched path is only taken when the kernel supports it");
+                    sums[k] += v * wk;
+                }
+            }
+        }
+        2 => {
+            let a = &source_axes[0][..n];
+            let b = &source_axes[1][..n];
+            for ((&ax, &bx), &wk) in a.iter().zip(b).zip(weights) {
+                for k in 0..TARGET_LANES {
+                    let d0 = tx[k] - ax;
+                    let d1 = ty[k] - bx;
+                    let v = kernel_function
+                        .evaluate_from_distance_sq(d0 * d0 + d1 * d1)
+                        .expect("batched path is only taken when the kernel supports it");
+                    sums[k] += v * wk;
+                }
+            }
+        }
+        _ => {
+            let a = &source_axes[0][..n];
+            let b = &source_axes[1][..n];
+            let c = &source_axes[2][..n];
+            for (((&ax, &bx), &cx), &wk) in a.iter().zip(b).zip(c).zip(weights) {
+                for k in 0..TARGET_LANES {
+                    let d0 = tx[k] - ax;
+                    let d1 = ty[k] - bx;
+                    let d2 = tz[k] - cx;
+                    let v = kernel_function
+                        .evaluate_from_distance_sq(d0 * d0 + d1 * d1 + d2 * d2)
+                        .expect("batched path is only taken when the kernel supports it");
+                    sums[k] += v * wk;
+                }
+            }
+        }
+    }
+
+    *acc = sums;
+}
+
+/// Accumulates the weighted kernel sum over `source_axes` onto `values[t]` for every
+/// target index `t` in `target_indices`, [`TARGET_LANES`] targets at a time.
+///
+/// A short final chunk is padded by repeating one of its targets. The padded lanes
+/// are computed and discarded, and never read from or write to `values`.
+///
+/// # Safety
+///
+/// `values` must be valid for reads and writes at every index in `target_indices`,
+/// the indices must be distinct, and nothing else may access those elements for the
+/// duration of the call.
+#[inline(always)]
+unsafe fn accumulate_weighted_kernel_for_targets_impl<K>(
+    kernel_function: &K,
+    target_points: MatRef<f64>,
+    target_indices: &[usize],
+    source_axes: &[&[f64]; 3],
+    weights: &[f64],
+    dims: usize,
+    values: *mut f64,
+) where
+    K: KernelFunction,
+{
+    for chunk in target_indices.chunks(TARGET_LANES) {
+        let mut targets = [[0.0f64; TARGET_LANES]; 3];
+        for k in 0..TARGET_LANES {
+            let target_idx = chunk[if k < chunk.len() { k } else { 0 }];
+            for d in 0..dims {
+                targets[d][k] = *target_points.get(target_idx, d);
+            }
+        }
+
+        let mut acc = [0.0f64; TARGET_LANES];
+        for (slot, &target_idx) in acc.iter_mut().zip(chunk) {
+            *slot = unsafe { *values.add(target_idx) };
+        }
+
+        accumulate_weighted_kernel_lanes_impl(
+            kernel_function,
+            &targets,
+            source_axes,
+            weights,
+            dims,
+            &mut acc,
+        );
+
+        for (&sum, &target_idx) in acc.iter().zip(chunk) {
+            unsafe { *values.add(target_idx) = sum };
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Runtime SIMD dispatch
 //
@@ -208,6 +343,7 @@ unsafe fn fill_kernel_column_avx<K>(
     fill_kernel_column_impl(kernel_function, target_axes, source, dims, out)
 }
 
+#[cfg(test)]
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f")]
 unsafe fn accumulate_weighted_kernel_avx512<K>(
@@ -224,6 +360,7 @@ where
     accumulate_weighted_kernel_impl(kernel_function, target, source_axes, weights, dims, acc)
 }
 
+#[cfg(test)]
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx")]
 unsafe fn accumulate_weighted_kernel_avx<K>(
@@ -238,6 +375,58 @@ where
     K: KernelFunction,
 {
     accumulate_weighted_kernel_impl(kernel_function, target, source_axes, weights, dims, acc)
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f")]
+unsafe fn accumulate_weighted_kernel_for_targets_avx512<K>(
+    kernel_function: &K,
+    target_points: MatRef<f64>,
+    target_indices: &[usize],
+    source_axes: &[&[f64]; 3],
+    weights: &[f64],
+    dims: usize,
+    values: *mut f64,
+) where
+    K: KernelFunction,
+{
+    unsafe {
+        accumulate_weighted_kernel_for_targets_impl(
+            kernel_function,
+            target_points,
+            target_indices,
+            source_axes,
+            weights,
+            dims,
+            values,
+        )
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx")]
+unsafe fn accumulate_weighted_kernel_for_targets_avx<K>(
+    kernel_function: &K,
+    target_points: MatRef<f64>,
+    target_indices: &[usize],
+    source_axes: &[&[f64]; 3],
+    weights: &[f64],
+    dims: usize,
+    values: *mut f64,
+) where
+    K: KernelFunction,
+{
+    unsafe {
+        accumulate_weighted_kernel_for_targets_impl(
+            kernel_function,
+            target_points,
+            target_indices,
+            source_axes,
+            weights,
+            dims,
+            values,
+        )
+    }
 }
 
 /// Widest instruction set this CPU supports, resolved once.
@@ -302,6 +491,7 @@ fn fill_kernel_column<K>(
 
 /// See [`accumulate_weighted_kernel_impl`]. Dispatches to the widest available
 /// lanes; every variant is the same source and produces bit-identical results.
+#[cfg(test)]
 #[inline]
 pub(crate) fn accumulate_weighted_kernel<K>(
     kernel_function: &K,
@@ -341,7 +531,66 @@ where
     }
 }
 
+/// See [`accumulate_weighted_kernel_for_targets_impl`]. Dispatches to the widest
+/// available lanes; every variant is the same source and produces bit-identical
+/// results.
+///
+/// # Safety
+///
+/// As for [`accumulate_weighted_kernel_for_targets_impl`].
+#[inline]
+pub(crate) unsafe fn accumulate_weighted_kernel_for_targets<K>(
+    kernel_function: &K,
+    target_points: MatRef<f64>,
+    target_indices: &[usize],
+    source_axes: &[&[f64]; 3],
+    weights: &[f64],
+    dims: usize,
+    values: *mut f64,
+) where
+    K: KernelFunction,
+{
+    match simd_level() {
+        #[cfg(target_arch = "x86_64")]
+        SimdLevel::Avx512 => unsafe {
+            accumulate_weighted_kernel_for_targets_avx512(
+                kernel_function,
+                target_points,
+                target_indices,
+                source_axes,
+                weights,
+                dims,
+                values,
+            )
+        },
+        #[cfg(target_arch = "x86_64")]
+        SimdLevel::Avx => unsafe {
+            accumulate_weighted_kernel_for_targets_avx(
+                kernel_function,
+                target_points,
+                target_indices,
+                source_axes,
+                weights,
+                dims,
+                values,
+            )
+        },
+        SimdLevel::Baseline => unsafe {
+            accumulate_weighted_kernel_for_targets_impl(
+                kernel_function,
+                target_points,
+                target_indices,
+                source_axes,
+                weights,
+                dims,
+                values,
+            )
+        },
+    }
+}
+
 /// The four running sums a gradient-mode near-field interaction feeds.
+#[cfg(test)]
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ValueAndGradient {
     pub value: f64,
@@ -357,6 +606,11 @@ pub(crate) struct ValueAndGradient {
 /// order starting from the value passed in, which is exactly what the scalar loop
 /// does - so the result is bit-identical. Only the first `dims` gradient
 /// components are touched, matching the scalar path's handling of 1-2 dimensions.
+///
+/// Production code uses [`accumulate_weighted_kernel_gradients_for_targets`], which
+/// gives every target exactly these additions; this stays as the reference it is
+/// verified against.
+#[cfg(test)]
 #[inline(always)]
 fn accumulate_weighted_kernel_gradients_impl<K>(
     kernel_function: &K,
@@ -430,6 +684,155 @@ where
     acc
 }
 
+/// Gradient-mode counterpart of [`accumulate_weighted_kernel_lanes_impl`].
+///
+/// Each lane keeps four independent accumulators - the value and one per gradient
+/// component - and each receives exactly the terms
+/// [`accumulate_weighted_kernel_gradients_impl`] would give it, in ascending source
+/// order. Picking between a zero and a scaled gradient component selects one exact
+/// value rather than doing arithmetic, so it may compile to a blend without changing
+/// any bit. Only the first `dims` gradient accumulators are touched.
+#[inline(always)]
+fn accumulate_weighted_kernel_gradients_lanes_impl<K>(
+    kernel_function: &K,
+    targets: &[[f64; TARGET_LANES]; 3],
+    source_axes: &[&[f64]; 3],
+    weights: &[f64],
+    dims: usize,
+    value_acc: &mut [f64; TARGET_LANES],
+    gradient_acc: &mut [[f64; TARGET_LANES]; 3],
+) where
+    K: KernelFunction,
+{
+    let n = weights.len();
+    // Local copies, so the accumulators can live in registers.
+    let [tx, ty, tz] = *targets;
+    let mut sums = *value_acc;
+    let [mut g0, mut g1, mut g2] = *gradient_acc;
+
+    match dims {
+        1 => {
+            let a = &source_axes[0][..n];
+            for (&ax, &wk) in a.iter().zip(weights) {
+                for k in 0..TARGET_LANES {
+                    let d0 = tx[k] - ax;
+                    let (value, scale) = kernel_function
+                        .value_and_gradient_from_distance_sq(d0 * d0)
+                        .expect("batched gradient path is only taken when the kernel supports it");
+                    sums[k] += value * wk;
+                    g0[k] += scale.apply(d0) * wk;
+                }
+            }
+        }
+        2 => {
+            let a = &source_axes[0][..n];
+            let b = &source_axes[1][..n];
+            for ((&ax, &bx), &wk) in a.iter().zip(b).zip(weights) {
+                for k in 0..TARGET_LANES {
+                    let d0 = tx[k] - ax;
+                    let d1 = ty[k] - bx;
+                    let (value, scale) = kernel_function
+                        .value_and_gradient_from_distance_sq(d0 * d0 + d1 * d1)
+                        .expect("batched gradient path is only taken when the kernel supports it");
+                    sums[k] += value * wk;
+                    g0[k] += scale.apply(d0) * wk;
+                    g1[k] += scale.apply(d1) * wk;
+                }
+            }
+        }
+        _ => {
+            let a = &source_axes[0][..n];
+            let b = &source_axes[1][..n];
+            let c = &source_axes[2][..n];
+            for (((&ax, &bx), &cx), &wk) in a.iter().zip(b).zip(c).zip(weights) {
+                for k in 0..TARGET_LANES {
+                    let d0 = tx[k] - ax;
+                    let d1 = ty[k] - bx;
+                    let d2 = tz[k] - cx;
+                    let (value, scale) = kernel_function
+                        .value_and_gradient_from_distance_sq(d0 * d0 + d1 * d1 + d2 * d2)
+                        .expect("batched gradient path is only taken when the kernel supports it");
+                    sums[k] += value * wk;
+                    g0[k] += scale.apply(d0) * wk;
+                    g1[k] += scale.apply(d1) * wk;
+                    g2[k] += scale.apply(d2) * wk;
+                }
+            }
+        }
+    }
+
+    *value_acc = sums;
+    *gradient_acc = [g0, g1, g2];
+}
+
+/// Gradient-mode counterpart of [`accumulate_weighted_kernel_for_targets_impl`]:
+/// accumulates the weighted value onto `values[t]` and each weighted gradient
+/// component onto `gradients[d][t]`, for every target index `t` in
+/// `target_indices`, [`TARGET_LANES`] targets at a time.
+///
+/// A short final chunk is padded by repeating one of its targets. The padded lanes
+/// are computed and discarded, and never read from or write to the outputs.
+///
+/// # Safety
+///
+/// `values`, and `gradients[d]` for every `d < dims`, must be valid for reads and
+/// writes at every index in `target_indices`; the indices must be distinct; and
+/// nothing else may access those elements for the duration of the call.
+#[inline(always)]
+unsafe fn accumulate_weighted_kernel_gradients_for_targets_impl<K>(
+    kernel_function: &K,
+    target_points: MatRef<f64>,
+    target_indices: &[usize],
+    source_axes: &[&[f64]; 3],
+    weights: &[f64],
+    dims: usize,
+    values: *mut f64,
+    gradients: [*mut f64; 3],
+) where
+    K: KernelFunction,
+{
+    for chunk in target_indices.chunks(TARGET_LANES) {
+        let mut targets = [[0.0f64; TARGET_LANES]; 3];
+        for k in 0..TARGET_LANES {
+            let target_idx = chunk[if k < chunk.len() { k } else { 0 }];
+            for d in 0..dims {
+                targets[d][k] = *target_points.get(target_idx, d);
+            }
+        }
+
+        let mut value_acc = [0.0f64; TARGET_LANES];
+        let mut gradient_acc = [[0.0f64; TARGET_LANES]; 3];
+        for (k, &target_idx) in chunk.iter().enumerate() {
+            unsafe {
+                value_acc[k] = *values.add(target_idx);
+                for d in 0..dims {
+                    gradient_acc[d][k] = *gradients[d].add(target_idx);
+                }
+            }
+        }
+
+        accumulate_weighted_kernel_gradients_lanes_impl(
+            kernel_function,
+            &targets,
+            source_axes,
+            weights,
+            dims,
+            &mut value_acc,
+            &mut gradient_acc,
+        );
+
+        for (k, &target_idx) in chunk.iter().enumerate() {
+            unsafe {
+                *values.add(target_idx) = value_acc[k];
+                for d in 0..dims {
+                    *gradients[d].add(target_idx) = gradient_acc[d][k];
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f")]
 unsafe fn accumulate_weighted_kernel_gradients_avx512<K>(
@@ -453,6 +856,7 @@ where
     )
 }
 
+#[cfg(test)]
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx")]
 unsafe fn accumulate_weighted_kernel_gradients_avx<K>(
@@ -478,6 +882,7 @@ where
 
 /// See [`accumulate_weighted_kernel_gradients_impl`]. Dispatches to the widest
 /// available lanes; every variant is bit-identical.
+#[cfg(test)]
 #[inline]
 pub(crate) fn accumulate_weighted_kernel_gradients<K>(
     kernel_function: &K,
@@ -521,6 +926,124 @@ where
             dims,
             acc,
         ),
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f")]
+unsafe fn accumulate_weighted_kernel_gradients_for_targets_avx512<K>(
+    kernel_function: &K,
+    target_points: MatRef<f64>,
+    target_indices: &[usize],
+    source_axes: &[&[f64]; 3],
+    weights: &[f64],
+    dims: usize,
+    values: *mut f64,
+    gradients: [*mut f64; 3],
+) where
+    K: KernelFunction,
+{
+    unsafe {
+        accumulate_weighted_kernel_gradients_for_targets_impl(
+        kernel_function,
+        target_points,
+        target_indices,
+        source_axes,
+        weights,
+        dims,
+        values,
+        gradients,
+        )
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx")]
+unsafe fn accumulate_weighted_kernel_gradients_for_targets_avx<K>(
+    kernel_function: &K,
+    target_points: MatRef<f64>,
+    target_indices: &[usize],
+    source_axes: &[&[f64]; 3],
+    weights: &[f64],
+    dims: usize,
+    values: *mut f64,
+    gradients: [*mut f64; 3],
+) where
+    K: KernelFunction,
+{
+    unsafe {
+        accumulate_weighted_kernel_gradients_for_targets_impl(
+        kernel_function,
+        target_points,
+        target_indices,
+        source_axes,
+        weights,
+        dims,
+        values,
+        gradients,
+        )
+    }
+}
+
+/// See [`accumulate_weighted_kernel_gradients_for_targets_impl`]. Dispatches to the
+/// widest available lanes; every variant is the same source and produces
+/// bit-identical results.
+///
+/// # Safety
+///
+/// As for [`accumulate_weighted_kernel_gradients_for_targets_impl`].
+#[inline]
+pub(crate) unsafe fn accumulate_weighted_kernel_gradients_for_targets<K>(
+    kernel_function: &K,
+    target_points: MatRef<f64>,
+    target_indices: &[usize],
+    source_axes: &[&[f64]; 3],
+    weights: &[f64],
+    dims: usize,
+    values: *mut f64,
+    gradients: [*mut f64; 3],
+) where
+    K: KernelFunction,
+{
+    match simd_level() {
+        #[cfg(target_arch = "x86_64")]
+        SimdLevel::Avx512 => unsafe {
+            accumulate_weighted_kernel_gradients_for_targets_avx512(
+                kernel_function,
+                target_points,
+                target_indices,
+                source_axes,
+                weights,
+                dims,
+                values,
+                gradients,
+            )
+        },
+        #[cfg(target_arch = "x86_64")]
+        SimdLevel::Avx => unsafe {
+            accumulate_weighted_kernel_gradients_for_targets_avx(
+                kernel_function,
+                target_points,
+                target_indices,
+                source_axes,
+                weights,
+                dims,
+                values,
+                gradients,
+            )
+        },
+        SimdLevel::Baseline => unsafe {
+            accumulate_weighted_kernel_gradients_for_targets_impl(
+                kernel_function,
+                target_points,
+                target_indices,
+                source_axes,
+                weights,
+                dims,
+                values,
+                gradients,
+            )
+        },
     }
 }
 
@@ -964,6 +1487,92 @@ mod batched_accumulation_tests {
         assert!(cases > 100, "expected a broad sweep, checked {cases}");
     }
 
+    /// Distinct target indices in a scrambled order, so lanes gather from and
+    /// scatter to non-adjacent rows.
+    fn scrambled_indices(count: usize, total: usize) -> Vec<usize> {
+        assert!(count <= total);
+        let mut indices: Vec<usize> = (0..total).map(|i| (i * 7 + 3) % total).collect();
+        indices.truncate(count);
+        indices
+    }
+
+    #[test]
+    fn accumulate_weighted_kernel_for_targets_matches_scalar_loop_bit_for_bit() {
+        let mut cases = 0usize;
+
+        for dims in 1usize..=3 {
+            for &n in &[1usize, 2, 7, 63, 64, 65, 343] {
+                let sources = Mat::<f64>::from_fn(n, dims, |i, j| {
+                    ((i * 47 + j * 19) as f64).sin() * 2.0 + 0.1
+                });
+                let weights: Vec<f64> = (0..n)
+                    .map(|i| ((i as f64) * 0.91).sin() * 10f64.powi((i % 7) as i32 - 3))
+                    .collect();
+                let empty: &[f64] = &[];
+                let mut source_axes: [&[f64]; 3] = [empty; 3];
+                for d in 0..dims {
+                    source_axes[d] = sources.col_as_slice(d);
+                }
+
+                // Counts below, at, and either side of multiples of the lane width,
+                // so padded final chunks are exercised.
+                for &count in &[1usize, 5, 7, 8, 9, 16, 23] {
+                    // 29 rows is coprime with the stride in `scrambled_indices`, so the
+                    // selected indices are distinct.
+                    let total = 29;
+                    let target_points = Mat::<f64>::from_fn(total, dims, |i, j| {
+                        ((i * 13 + j * 29) as f64).cos() * 1.7 - 0.2
+                    });
+                    let target_indices = scrambled_indices(count, total);
+
+                    // Every row starts from a different, awkward value; rows not in
+                    // `target_indices` must come back untouched.
+                    let before: Vec<f64> = (0..total)
+                        .map(|i| ((i as f64) * 2.3).sin() * 10f64.powi((i % 9) as i32 - 4))
+                        .collect();
+                    let mut values = before.clone();
+
+                    unsafe {
+                        accumulate_weighted_kernel_for_targets(
+                            &ProbeKernel,
+                            target_points.as_ref(),
+                            &target_indices,
+                            &source_axes,
+                            &weights,
+                            dims,
+                            values.as_mut_ptr(),
+                        );
+                    }
+
+                    let mut want = before.clone();
+                    for &t in &target_indices {
+                        want[t] = reference_accumulate(
+                            &ProbeKernel,
+                            target_points.row(t),
+                            &sources,
+                            &weights,
+                            before[t],
+                        );
+                    }
+
+                    for t in 0..total {
+                        assert_eq!(
+                            values[t].to_bits(),
+                            want[t].to_bits(),
+                            "row {t} differs for dims={dims} n={n} count={count}: \
+                             {} vs {}",
+                            values[t],
+                            want[t]
+                        );
+                    }
+                    cases += 1;
+                }
+            }
+        }
+
+        assert!(cases > 100, "expected a broad sweep, checked {cases}");
+    }
+
     #[test]
     fn supports_batched_kernel_gates_on_dimension_and_kernel() {
         struct NoBatch;
@@ -999,6 +1608,98 @@ mod simd_dispatch_tests {
         fn evaluate_from_distance_sq(&self, r2: f64) -> Option<f64> {
             Some(-r2.sqrt())
         }
+    }
+
+    /// The target-lane routine's instruction-set variants must agree bit-for-bit
+    /// with its baseline build, for the same reason as the test below.
+    #[test]
+    fn target_lane_simd_variants_agree_bit_for_bit() {
+        type Variant = unsafe fn(
+            &ProbeKernel,
+            MatRef<f64>,
+            &[usize],
+            &[&[f64]; 3],
+            &[f64],
+            usize,
+            *mut f64,
+        );
+        let mut variants: Vec<(&str, Variant)> = vec![(
+            "dispatched",
+            accumulate_weighted_kernel_for_targets::<ProbeKernel>,
+        )];
+        #[cfg(target_arch = "x86_64")]
+        {
+            if std::arch::is_x86_feature_detected!("avx") {
+                variants.push(("avx", accumulate_weighted_kernel_for_targets_avx::<ProbeKernel>));
+            }
+            if std::arch::is_x86_feature_detected!("avx512f") {
+                variants.push((
+                    "avx512",
+                    accumulate_weighted_kernel_for_targets_avx512::<ProbeKernel>,
+                ));
+            }
+        }
+
+        let mut compared = 0usize;
+        for dims in 1usize..=3 {
+            for &n in &[1usize, 31, 64, 65, 343] {
+                let sources = Mat::<f64>::from_fn(n, dims, |i, j| {
+                    ((i * 41 + j * 23) as f64).sin() * 3.0 + 0.25
+                });
+                let weights: Vec<f64> = (0..n)
+                    .map(|i| ((i as f64) * 1.31).cos() * 10f64.powi((i % 5) as i32 - 2))
+                    .collect();
+                let empty: &[f64] = &[];
+                let mut axes: [&[f64]; 3] = [empty; 3];
+                for d in 0..dims {
+                    axes[d] = sources.col_as_slice(d);
+                }
+
+                let total = 21;
+                let target_points = Mat::<f64>::from_fn(total, dims, |i, j| {
+                    0.41 + ((i * 5 + j * 11) as f64).sin() * 0.83
+                });
+                let target_indices: Vec<usize> = (0..total).rev().collect();
+                let start: Vec<f64> = (0..total).map(|i| (i as f64 - 10.0) * 765.4321).collect();
+
+                let mut baseline = start.clone();
+                unsafe {
+                    accumulate_weighted_kernel_for_targets_impl(
+                        &ProbeKernel,
+                        target_points.as_ref(),
+                        &target_indices,
+                        &axes,
+                        &weights,
+                        dims,
+                        baseline.as_mut_ptr(),
+                    );
+                }
+
+                for (name, variant) in &variants {
+                    let mut got = start.clone();
+                    unsafe {
+                        variant(
+                            &ProbeKernel,
+                            target_points.as_ref(),
+                            &target_indices,
+                            &axes,
+                            &weights,
+                            dims,
+                            got.as_mut_ptr(),
+                        );
+                    }
+                    for t in 0..total {
+                        assert_eq!(
+                            got[t].to_bits(),
+                            baseline[t].to_bits(),
+                            "{name} variant differs at row {t}: dims={dims} n={n}"
+                        );
+                        compared += 1;
+                    }
+                }
+            }
+        }
+        assert!(compared > 0);
     }
 
     /// Every instruction-set variant must agree bit-for-bit with the baseline.
@@ -1274,6 +1975,221 @@ mod batched_gradient_tests {
         }
 
         assert!(cases > 50, "expected a broad sweep, checked {cases}");
+    }
+
+    /// Runs `variant` over scrambled, distinct target rows and returns the value
+    /// column and three gradient columns it leaves behind.
+    fn run_gradient_targets(
+        variant: unsafe fn(
+            &ProbeGradKernel,
+            MatRef<f64>,
+            &[usize],
+            &[&[f64]; 3],
+            &[f64],
+            usize,
+            *mut f64,
+            [*mut f64; 3],
+        ),
+        target_points: &Mat<f64>,
+        target_indices: &[usize],
+        axes: &[&[f64]; 3],
+        weights: &[f64],
+        dims: usize,
+        start: &[Vec<f64>; 4],
+    ) -> [Vec<f64>; 4] {
+        let [mut v, mut g0, mut g1, mut g2] = start.clone();
+        let mut gradients = [g0.as_mut_ptr(), g1.as_mut_ptr(), g2.as_mut_ptr()];
+        for d in dims..3 {
+            gradients[d] = std::ptr::null_mut();
+        }
+        unsafe {
+            variant(
+                &ProbeGradKernel,
+                target_points.as_ref(),
+                target_indices,
+                axes,
+                weights,
+                dims,
+                v.as_mut_ptr(),
+                gradients,
+            );
+        }
+        [v, g0, g1, g2]
+    }
+
+    #[test]
+    fn gradient_target_lanes_match_scalar_loop_bit_for_bit() {
+        let mut cases = 0usize;
+        let total = 29usize;
+
+        for dims in 1usize..=3 {
+            for &n in &[1usize, 7, 64, 65, 343] {
+                let target_points = Mat::<f64>::from_fn(total, dims, |i, j| {
+                    ((i * 13 + j * 29) as f64).cos() * 2.1
+                });
+                // Source 3 coincides with target row 5, so the Zero branch fires for
+                // that target, and negative differences make any -0.0 visible.
+                let sources = Mat::<f64>::from_fn(n, dims, |i, j| {
+                    if i == 3 {
+                        target_points[(5, j)]
+                    } else {
+                        ((i * 43 + j * 17) as f64).sin() * 3.0
+                    }
+                });
+                let weights: Vec<f64> = (0..n)
+                    .map(|i| ((i as f64) * 0.77).sin() * 10f64.powi((i % 5) as i32 - 2))
+                    .collect();
+                let empty: &[f64] = &[];
+                let mut axes: [&[f64]; 3] = [empty; 3];
+                for d in 0..dims {
+                    axes[d] = sources.col_as_slice(d);
+                }
+
+                for &count in &[1usize, 6, 8, 9, 23] {
+                    // Stride 7 is coprime with 29 rows, so the indices are distinct;
+                    // row 5 is always among the first six.
+                    let target_indices: Vec<usize> =
+                        (0..count).map(|i| (i * 7 + 5) % total).collect();
+                    let start: [Vec<f64>; 4] = std::array::from_fn(|c| {
+                        (0..total)
+                            .map(|i| match (i + c) % 4 {
+                                0 => 0.0,
+                                1 => -0.0,
+                                2 => (i as f64) * 91.25,
+                                _ => -1e9 / (i as f64 + 1.0),
+                            })
+                            .collect()
+                    });
+
+                    let got = run_gradient_targets(
+                        accumulate_weighted_kernel_gradients_for_targets::<ProbeGradKernel>,
+                        &target_points,
+                        &target_indices,
+                        &axes,
+                        &weights,
+                        dims,
+                        &start,
+                    );
+
+                    let mut want = start.clone();
+                    for &t in &target_indices {
+                        let seed = ValueAndGradient {
+                            value: start[0][t],
+                            gradient: [start[1][t], start[2][t], start[3][t]],
+                        };
+                        let r = reference(
+                            &ProbeGradKernel,
+                            target_points.row(t),
+                            &sources,
+                            &weights,
+                            dims,
+                            seed,
+                        );
+                        want[0][t] = r.value;
+                        for d in 0..dims {
+                            want[1 + d][t] = r.gradient[d];
+                        }
+                    }
+
+                    for c in 0..4 {
+                        for t in 0..total {
+                            assert_eq!(
+                                got[c][t].to_bits(),
+                                want[c][t].to_bits(),
+                                "column {c} row {t} differs: dims={dims} n={n} count={count}: \
+                                 {} vs {}",
+                                got[c][t],
+                                want[c][t]
+                            );
+                        }
+                    }
+                    cases += 1;
+                }
+            }
+        }
+
+        assert!(cases > 50, "expected a broad sweep, checked {cases}");
+    }
+
+    #[test]
+    fn gradient_target_lane_simd_variants_agree() {
+        type Variant = unsafe fn(
+            &ProbeGradKernel,
+            MatRef<f64>,
+            &[usize],
+            &[&[f64]; 3],
+            &[f64],
+            usize,
+            *mut f64,
+            [*mut f64; 3],
+        );
+        let mut variants: Vec<(&str, Variant)> = vec![(
+            "dispatched",
+            accumulate_weighted_kernel_gradients_for_targets::<ProbeGradKernel>,
+        )];
+        #[cfg(target_arch = "x86_64")]
+        {
+            if std::arch::is_x86_feature_detected!("avx") {
+                variants.push((
+                    "avx",
+                    accumulate_weighted_kernel_gradients_for_targets_avx::<ProbeGradKernel>,
+                ));
+            }
+            if std::arch::is_x86_feature_detected!("avx512f") {
+                variants.push((
+                    "avx512",
+                    accumulate_weighted_kernel_gradients_for_targets_avx512::<ProbeGradKernel>,
+                ));
+            }
+        }
+
+        let total = 21usize;
+        for dims in 1usize..=3 {
+            let n = 200usize;
+            let sources =
+                Mat::<f64>::from_fn(n, dims, |i, j| ((i * 37 + j * 13) as f64).cos() * 2.5);
+            let weights: Vec<f64> = (0..n).map(|i| ((i as f64) * 0.5).sin()).collect();
+            let empty: &[f64] = &[];
+            let mut axes: [&[f64]; 3] = [empty; 3];
+            for d in 0..dims {
+                axes[d] = sources.col_as_slice(d);
+            }
+            let target_points =
+                Mat::<f64>::from_fn(total, dims, |i, j| ((i * 5 + j * 11) as f64).sin() * 1.3);
+            let target_indices: Vec<usize> = (0..total).rev().collect();
+            let start: [Vec<f64>; 4] =
+                std::array::from_fn(|c| (0..total).map(|i| (i + c) as f64 * -3.5).collect());
+
+            let baseline = run_gradient_targets(
+                accumulate_weighted_kernel_gradients_for_targets_impl::<ProbeGradKernel>,
+                &target_points,
+                &target_indices,
+                &axes,
+                &weights,
+                dims,
+                &start,
+            );
+            for (name, variant) in &variants {
+                let got = run_gradient_targets(
+                    *variant,
+                    &target_points,
+                    &target_indices,
+                    &axes,
+                    &weights,
+                    dims,
+                    &start,
+                );
+                for c in 0..4 {
+                    for t in 0..total {
+                        assert_eq!(
+                            got[c][t].to_bits(),
+                            baseline[c][t].to_bits(),
+                            "{name} variant differs at column {c} row {t}: dims={dims}"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     /// All instruction-set variants must agree, for the same reason as the
