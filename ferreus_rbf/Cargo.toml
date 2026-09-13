@@ -30,12 +30,6 @@ serde = { version = "1.0.228", features = ["derive", "rc"] }
 [target.'cfg(windows)'.dependencies]
 gdt-cpus = { version = "0.2606.1", default-features = false }
 
-[profile.dev]
-opt-level = 3
-
-[profile.dev.package.faer]
-opt-level = 3
-
 [package.metadata.docs.rs]
 rustdoc-args = [
     "--html-in-header", "katex-header.html",

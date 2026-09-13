@@ -13,3 +13,14 @@ members = [
 [workspace.dependencies]
 faer = "0.24.4"
 rayon = "1.11.0"
+
+# NOTE: Cargo only honours profile sections in the *workspace root* manifest.
+# These were previously declared in the member manifests, where they were silently
+# ignored.
+
+# These crates are numerically heavy; unoptimised debug builds are unusably slow.
+[profile.dev]
+opt-level = 3
+
+[profile.dev.package.faer]
+opt-level = 3

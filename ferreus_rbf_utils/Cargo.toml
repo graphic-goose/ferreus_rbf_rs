@@ -18,9 +18,6 @@ faer.workspace = true
 serde = { version = "1.0.228", features = ["derive", "rc"] }
 ferreus_bbfmm = {path = "../ferreus_bbfmm", version = "0.3.0"}
 
-[profile.dev.package.faer]
-opt-level = 3
-
 [package.metadata.docs.rs]
 rustdoc-args = [
     "--html-in-header", "katex-header.html",

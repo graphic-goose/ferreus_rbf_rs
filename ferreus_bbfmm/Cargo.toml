@@ -22,9 +22,6 @@ itertools = "0.14.0"
 csv = "1.4.0"
 rand = "0.9.2"
 
-[profile.dev.package.faer]
-opt-level = 3
-
 [package.metadata.docs.rs]
 rustdoc-args = [
     "--html-in-header", "katex-header.html",
