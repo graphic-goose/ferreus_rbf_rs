@@ -12,11 +12,20 @@ rust-version = "1.97.1"
 
 [lib]
 crate-type = ["lib"]
+# The library itself defines no benchmarks; benchmarks live in `benches/`.
+bench = false
 
 [dependencies]
 faer.workspace = true
 rstar = "0.12.2"
 spade = "2.15.1"
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "isosurface"
+harness = false
 
 [package.metadata.docs.rs]
 rustdoc-args = [

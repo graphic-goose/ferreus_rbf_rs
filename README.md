@@ -38,6 +38,21 @@ For more detailed API documentation and examples, see the individual crate and
 package READMEs, the Rustdoc pages, and the `docs/` and `examples/` directories
 in each sub‑project.
 
+## Benchmarks
+
+Each Rust crate ships a Criterion benchmark suite under `benches/`, covering FMM tree
+construction and evaluation, kernel matrix assembly, isosurface extraction, and
+end‑to‑end RBF fitting and evaluation.
+
+```bash
+cargo bench --workspace              # everything
+cargo bench --workspace -- --test    # fast smoke test, no measurement
+cargo bench -p ferreus_rbf --bench fit -- 'rbf/fit/iterative'
+```
+
+See [`BENCHMARKING.md`](BENCHMARKING.md) for the full list of benchmark groups, the
+before/after baseline workflow, and profiling instructions.
+
 ## Documentation
 
 - Rust:
@@ -112,3 +127,12 @@ This copyright applies to all files in this repository, whether or not an
 individual file contains an explicit notice.
 
 The code is released under the MIT License – see `LICENSE` for details.
+
+### Optimisation
+
+A series of optimisations were produced by Leo Timmins, maintainer of 
+Incline Design.
+
+> Copyright (c) 2026 Leo Timmins.
+
+This contribution is released under the MIT License – see `LICENSE` for details.
