@@ -474,7 +474,7 @@ class RBFInterpolator:
     - The solved RBF and polynomial coefficients.  
     - Kernel settings and solver parameters used during fitting.  
     - Optional global trend transforms (e.g. anisotropy/scaling/rotation).  
-    - An optional Fast Multipole Method (FMM) tree evaluator for efficient queries.  
+    - An optional direct or Fast Multipole Method (FMM) evaluator for efficient queries.
     """
     def __init__(
         self,
@@ -545,13 +545,14 @@ class RBFInterpolator:
         self,
         targets: npt.NDArray[np.float64],
     ) -> npt.NDArray[np.float64]:
-        """Evaluate the interpolant at `target_points` using a **one-shot** FMM evaluator.
+        """Evaluate the interpolant at `target_points` using a **one-shot** evaluator.
 
         This is the most convenient way to evaluate a single batch: it builds a
-        temporary FMM tree, evaluates, and discards the evaluator. If a
+        temporary evaluator, evaluates, and discards it. Direct evaluation is used
+        below Params.direct_eval_threshold; otherwise an FMM tree is used. If a
         `global_trend` is present, the target points are transformed for evaluation.
 
-        Extents are computed as the **union** of the source and target point
+        For FMM, extents are computed as the **union** of source and target point
         bounding boxes to ensure all targets can be assigned to tree boxes.
 
         Parameters
@@ -572,13 +573,14 @@ class RBFInterpolator:
         self,
         targets: npt.NDArray[np.float64],
     ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
-        """Evaluate the interpolant and its gradient at `target_points` using a **one-shot** FMM evaluator.
+        """Evaluate the interpolant and its gradient at `target_points` using a **one-shot** evaluator.
 
         This is the most convenient way to evaluate a single batch: it builds a
-        temporary FMM tree, evaluates, and discards the evaluator. If a
+        temporary evaluator, evaluates, and discards it. Direct evaluation is used
+        below Params.direct_eval_threshold; otherwise an FMM tree is used. If a
         `global_trend` is present, the target points are transformed for evaluation.
 
-        Extents are computed as the **union** of the source and target point
+        For FMM, extents are computed as the **union** of source and target point
         bounding boxes to ensure all targets can be assigned to tree boxes.
 
         Parameters
@@ -630,7 +632,10 @@ class RBFInterpolator:
         ...
 
     def build_evaluator(self, extents: Optional[npt.NDArray[np.float64]] = None) -> None:
-        """Build and store an FMM evaluator for **repeated evaluations**.
+        """Build and store a direct or FMM evaluator for **repeated evaluations**.
+
+        Below Params.direct_eval_threshold, direct evaluation ignores extents
+        and accepts targets anywhere. Extent restrictions apply only to FMM.
 
         Use this when you'll call [`evaluate_targets`][ferreus_rbf.RBFInterpolator.evaluate_targets] many times (e.g. during
         isosurfacing or interactive probing). The evaluator is constructed once and
@@ -657,7 +662,7 @@ class RBFInterpolator:
         ------
 
         - If called before [`build_evaluator`][ferreus_rbf.RBFInterpolator.build_evaluator].
-        - If any `target_points` lie **outside** the extents used to build the evaluator.
+        - With FMM, if any `target_points` lie **outside** the extents used to build the evaluator.
 
         Parameters
         ----------
@@ -686,7 +691,7 @@ class RBFInterpolator:
         ------
 
         - If called before [`build_evaluator`][ferreus_rbf.RBFInterpolator.build_evaluator].
-        - If any `target_points` lie **outside** the extents used to build the evaluator.
+        - With FMM, if any `target_points` lie **outside** the extents used to build the evaluator.
 
         Parameters
         ----------

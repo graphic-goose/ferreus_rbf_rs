@@ -28,8 +28,8 @@ pub use {
     kernel_helpers::KernelParams,
     traits::KernelFromParams,
     utils::{
-        FmmTree, KernelType, argmax, argmin, argsort, cartesian_product, get_a_matrix,
-        get_a_matrix_symmetric_solver, get_distance, get_pointarray_extents, kernel_phi, max,
-        select_mat_rows,
+        FmmTree, KernelType, argmax, argmin, argsort, cartesian_product, evaluate_direct,
+        get_a_matrix, get_a_matrix_symmetric_solver, get_distance, get_pointarray_extents,
+        kernel_phi, max, select_mat_rows,
     },
 };

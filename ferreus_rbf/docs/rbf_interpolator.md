@@ -10,7 +10,7 @@ The interpolator stores:
 - The solved RBF and polynomial coefficients.
 - Kernel settings and solver parameters used during fitting.
 - Optional global trend transforms (e.g. anisotropy/scaling/rotation).
-- An optional Fast Multipole Method (FMM) tree evaluator for efficient queries.
+- An optional direct or Fast Multipole Method (FMM) evaluator for efficient queries.
 
 # Construction:
 

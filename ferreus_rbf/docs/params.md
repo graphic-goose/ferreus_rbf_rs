@@ -13,6 +13,8 @@ Defaults:
 - `ddm_params`: [`DDMParams::default()`]
 - `fmm_params`: [`FmmParams::new_defaults(kernel_type)`]
 - `naive_solve_threshold`: `4096`
+- `direct_eval_threshold`: `4096` (direct evaluation for fewer sources; `0` forces FMM)
+- `direct_eval_batch_size`: `128` (positive target batch size, independent of FMM)
 - `test_unique`: `true`
 
 # Examples
@@ -43,3 +45,12 @@ assert_eq!(
     (Solvers::DDM, 2048, false)
 );
 ```
+Direct evaluation computes exact kernel sums over parallel target chunks with bounded
+working memory, including gradients and all value columns. Its threshold is independent of the fitting
+threshold. It applies to one-shot queries, stored evaluators, source-point
+queries, and isosurface sampling. Direct evaluators do not require target extents.
+
+Direct evaluation uses `direct_eval_batch_size` as its positive target batch size.
+FMM evaluation uses `fmm_params.eval_chunk_size` independently.
+Kernel selection occurs once per query; batching and parallelism are handled by
+the typed kernel helper in `ferreus_rbf_utils`.

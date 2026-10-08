@@ -356,6 +356,7 @@ version = "0.3.0"
 dependencies = [
  "faer",
  "ferreus_bbfmm",
+ "rayon",
  "serde",
 ]
 

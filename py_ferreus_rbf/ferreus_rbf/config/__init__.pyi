@@ -131,7 +131,7 @@ class FmmParams:
     epsilon : float
         Tolerance threshold for M2L compression.
     eval_chunk_size : int
-        Number of target points to evaluate in each chunk.
+        Number of target points to evaluate in each FMM chunk.
     """
     def __init__(
         self,
@@ -155,6 +155,8 @@ class Params:
     - `solver_type`: [`Solvers.FGMRES`][ferreus_rbf.config.Solvers.FGMRES]   
     - `ddm_params`: Default DDMParams  
     - `fmm_params`: Default FmmParams  
+    - `direct_eval_threshold`: `4096`
+    - `direct_eval_batch_size`: `128`
     - `naive_solve_threshold`: `4096`  
     - `test_unique`: `true`  
     """
@@ -166,6 +168,8 @@ class Params:
         fmm_params: Optional[FmmParams] = None,
         naive_solve_threshold: Optional[int] = None,
         test_unique: Optional[bool] = None,
+        direct_eval_threshold: Optional[int] = None,
+        direct_eval_batch_size: Optional[int] = None,
     ) -> None: 
         """
         Parameters
@@ -180,6 +184,11 @@ class Params:
             Parameters controlling the fast multipole method (FMM).
         naive_solve_threshold : Optional[int]
             Threshold below which the system is solved directly rather than using iterative methods.
+        direct_eval_threshold : Optional[int]
+            Use direct evaluation below this source count; zero forces FMM.
+            Independent of naive_solve_threshold. Direct evaluation supports targets outside source extents.
+        direct_eval_batch_size : Optional[int]
+            Positive target batch size for direct evaluation, independent of FMM settings.
         test_unique : Optional[bool]
             Whether to test for and remove duplicate source points. This is highly recommended, as in order to ensure a unique solution to the RBF, the source points must be unique.
         """

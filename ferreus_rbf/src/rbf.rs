@@ -173,9 +173,20 @@ enum FmmEvaluatorMode {
     Leaves,
 }
 
+/// Cached kernel evaluator. Direct evaluation has no spatial extent restriction.
+#[derive(Debug)]
+enum Evaluator {
+    Direct {
+        source_points: Arc<Mat<f64>>,
+        kernel_params: KernelParams,
+        batch_size: usize,
+    },
+    Fmm(Box<FmmTree>),
+}
+
 /// Convenience helper struct used in the _evaluate function.
 struct EvaluatorParams<'a> {
-    tree: &'a mut FmmTree,
+    evaluator: &'a mut Evaluator,
     target_points: MatRef<'a, f64>,
     coefficients: &'a Coefficients,
     interpolant_settings: &'a InterpolantSettings,
@@ -289,11 +300,11 @@ pub struct RBFInterpolator {
     /// Solver and algorithm parameters.
     pub params: Params,
 
-    /// Optional fast multipole evaluator for efficient queries.
+    /// Optional direct or fast multipole evaluator for repeated queries.
     ///
     /// Skipped during serialization.
     #[serde(skip, default)]
-    evaluator: Option<FmmTree>,
+    evaluator: Option<Evaluator>,
 
     /// Optional global trend transform (anisotropy / rotation).
     global_trend: Option<GlobalTrendTransform>,
@@ -717,6 +728,38 @@ impl RBFInterpolator {
         tree
     }
 
+    /// Internal: build and configure an evaluator. 
+    /// 
+    /// If the number of source points is less than the [`Params::direct_eval_threshold`] paramameter then
+    /// a direct evaluator will be used, otherwise an FMM evaluator will be used.
+    fn _setup_evaluator(
+        &self,
+        adaptive: bool,
+        sparse: bool,
+        extents: Option<Vec<f64>>,
+        mode: FmmEvaluatorMode,
+    ) -> Evaluator {
+        if self.points.nrows() < self.params.direct_eval_threshold {
+            let source_points = match &self.global_trend {
+                Some(gt) => Arc::new(gt.transform_points(self.points.as_mat_ref())),
+                None => self.points.clone(),
+            };
+            Evaluator::Direct {
+                source_points,
+                kernel_params: (*self.interpolant_settings).into(),
+                batch_size: self.params.direct_eval_batch_size,
+            }
+        } else {
+            let mut tree = self._setup_fmmtree(adaptive, sparse, extents);
+            let weights = self.coefficients.point_coefficients.as_mat_ref();
+            tree.set_weights(weights);
+            if matches!(mode, FmmEvaluatorMode::Leaves) {
+                tree.set_local_coefficients(weights);
+            }
+            Evaluator::Fmm(Box::new(tree))
+        }
+    }
+
     fn _get_evaluator_union_extents(
         &self,
         target_points: Option<MatRef<f64>>,
@@ -741,13 +784,14 @@ impl RBFInterpolator {
         combined_extents
     }
 
-    /// Evaluate the interpolant at `target_points` using a **one-shot** FMM evaluator.
+    /// Evaluate the interpolant at `target_points` using a **one-shot** evaluator.
     ///
     /// This is the most convenient way to evaluate a single batch: it builds a
-    /// temporary FMM tree, evaluates, and discards the evaluator. If a
+    /// temporary evaluator, evaluates, and discards it. Below `direct_eval_threshold`,
+    /// kernel sums are evaluated directly; otherwise an FMM tree is used. If a
     /// `global_trend` is present, the target points are transformed for evaluation.
     ///
-    /// Extents are computed as the **union** of the source and target point
+    /// For FMM, extents are computed as the **union** of source and target point
     /// bounding boxes to ensure all targets can be assigned to tree boxes.
     ///
     /// ### Returns
@@ -768,14 +812,17 @@ impl RBFInterpolator {
         let adaptive = true;
         let sparse = false;
 
-        let extents = self._get_evaluator_union_extents(Some(target_points), None);
+        let extents = if self.points.nrows() < self.params.direct_eval_threshold {
+            None
+        } else {
+            Some(self._get_evaluator_union_extents(Some(target_points), None))
+        };
 
-        let mut tree = self._setup_fmmtree(adaptive, sparse, Some(extents));
-
-        tree.set_weights(self.coefficients.point_coefficients.as_mat_ref());
+        let mut evaluator =
+            self._setup_evaluator(adaptive, sparse, extents, FmmEvaluatorMode::Full);
 
         let evaluator_params = EvaluatorParams {
-            tree: &mut tree,
+            evaluator: &mut evaluator,
             target_points: target_points.as_ref(),
             coefficients: &self.coefficients,
             interpolant_settings: &self.interpolant_settings,
@@ -793,13 +840,14 @@ impl RBFInterpolator {
         interpolated_values
     }
 
-    /// Evaluate the interpolant and its gradient at `target_points` using a **one-shot** FMM evaluator.
+    /// Evaluate the interpolant and its gradient at `target_points` using a **one-shot** evaluator.
     ///
     /// This is the most convenient way to evaluate a single batch: it builds a
-    /// temporary FMM tree, evaluates, and discards the evaluator. If a
+    /// temporary evaluator, evaluates, and discards it. Below `direct_eval_threshold`,
+    /// kernel sums are evaluated directly; otherwise an FMM tree is used. If a
     /// `global_trend` is present, the target points are transformed for evaluation.
     ///
-    /// Extents are computed as the **union** of the source and target point
+    /// For FMM, extents are computed as the **union** of source and target point
     /// bounding boxes to ensure all targets can be assigned to tree boxes.
     ///
     /// ### Returns
@@ -820,14 +868,17 @@ impl RBFInterpolator {
         let adaptive = true;
         let sparse = false;
 
-        let extents = self._get_evaluator_union_extents(Some(target_points), None);
+        let extents = if self.points.nrows() < self.params.direct_eval_threshold {
+            None
+        } else {
+            Some(self._get_evaluator_union_extents(Some(target_points), None))
+        };
 
-        let mut tree = self._setup_fmmtree(adaptive, sparse, Some(extents));
-
-        tree.set_weights(self.coefficients.point_coefficients.as_mat_ref());
+        let mut evaluator =
+            self._setup_evaluator(adaptive, sparse, extents, FmmEvaluatorMode::Full);
 
         let evaluator_params = EvaluatorParams {
-            tree: &mut tree,
+            evaluator: &mut evaluator,
             target_points: target_points.as_ref(),
             coefficients: &self.coefficients,
             interpolant_settings: &self.interpolant_settings,
@@ -872,12 +923,10 @@ impl RBFInterpolator {
         let adaptive = true;
         let sparse = true;
 
-        let mut tree = self._setup_fmmtree(adaptive, sparse, None);
-
-        tree.set_weights(self.coefficients.point_coefficients.as_mat_ref());
+        let mut evaluator = self._setup_evaluator(adaptive, sparse, None, FmmEvaluatorMode::Full);
 
         let evaluator_params = EvaluatorParams {
-            tree: &mut tree,
+            evaluator: &mut evaluator,
             target_points: self.points.as_mat_ref(),
             coefficients: &self.coefficients,
             interpolant_settings: &self.interpolant_settings,
@@ -895,10 +944,12 @@ impl RBFInterpolator {
         interpolated_values
     }
 
-    /// Build and store an FMM evaluator for **repeated evaluations**.
+    /// Build and store a direct or FMM evaluator for **repeated evaluations**.
     ///
     /// Use this when you’ll call [`RBFInterpolator::evaluate_targets`] many times.
     /// The evaluator is constructed once and saved inside the interpolator.
+    /// Below `direct_eval_threshold`, direct evaluation ignores `extents` and
+    /// accepts targets anywhere; the extent restrictions below apply only to FMM.
     ///
     /// ### Extents
     /// - If `extents` is `Some`, they define the evaluator domain
@@ -907,7 +958,7 @@ impl RBFInterpolator {
     ///   applicable) source points.
     ///
     /// ### Panics
-    /// - Evaluating targets **outside** the stored extents will make the backend
+    /// - With FMM, evaluating targets **outside** the stored extents will make the backend
     ///   unable to assign them to tree boxes and will **panic**. Use a sufficiently
     ///   generous domain when building the evaluator.
     ///
@@ -919,16 +970,8 @@ impl RBFInterpolator {
     /// rbfi.build_evaluator(None);
     /// ```
     pub fn build_evaluator(&mut self, extents: Option<Vec<f64>>) {
-        let adaptive = true;
-        let sparse = false;
-
-        let mut tree = self._setup_fmmtree(adaptive, sparse, extents);
-
-        tree.set_weights(self.coefficients.point_coefficients.as_mat_ref());
-
-        tree.set_local_coefficients(self.coefficients.point_coefficients.as_mat_ref());
-
-        self.evaluator = Some(tree);
+        self.evaluator =
+            Some(self._setup_evaluator(true, false, extents, FmmEvaluatorMode::Leaves));
     }
 
     /// Evaluate using the stored evaluator built by [`RBFInterpolator::build_evaluator`].
@@ -938,7 +981,7 @@ impl RBFInterpolator {
     ///
     /// ### Panics
     /// - If called before [`RBFInterpolator::build_evaluator`].
-    /// - If any `target_points` lie **outside** the extents used to build the
+    /// - With FMM, if any `target_points` lie **outside** the extents used to build the
     ///   evaluator.
     ///
     /// ### Example
@@ -950,10 +993,10 @@ impl RBFInterpolator {
     /// let values = rbfi.evaluate_targets(targets.as_ref());
     /// ```
     pub fn evaluate_targets(&mut self, target_points: MatRef<f64>) -> Mat<f64> {
-        let mut tree = self.evaluator.as_mut().unwrap();
+        let evaluator = self.evaluator.as_mut().unwrap();
 
         let evaluator_params = EvaluatorParams {
-            tree: &mut tree,
+            evaluator,
             target_points: target_points.as_ref(),
             coefficients: &self.coefficients,
             interpolant_settings: &self.interpolant_settings,
@@ -978,7 +1021,7 @@ impl RBFInterpolator {
     ///
     /// ### Panics
     /// - If called before [`RBFInterpolator::build_evaluator`].
-    /// - If any `target_points` lie **outside** the extents used to build the
+    /// - With FMM, if any `target_points` lie **outside** the extents used to build the
     ///   evaluator.
     ///
     /// ### Example
@@ -993,10 +1036,10 @@ impl RBFInterpolator {
         &mut self,
         target_points: MatRef<f64>,
     ) -> (Mat<f64>, Mat<f64>) {
-        let mut tree = self.evaluator.as_mut().unwrap();
+        let evaluator = self.evaluator.as_mut().unwrap();
 
         let evaluator_params = EvaluatorParams {
-            tree: &mut tree,
+            evaluator,
             target_points: target_points.as_ref(),
             coefficients: &self.coefficients,
             interpolant_settings: &self.interpolant_settings,
@@ -1100,12 +1143,12 @@ impl RBFInterpolator {
         let scale = &self.scale_factor;
         let gt = &self.global_trend;
 
-        let tree = RefCell::new(self.evaluator.as_mut().unwrap());
+        let evaluator = RefCell::new(self.evaluator.as_mut().unwrap());
 
         let mut surface_fn = |targets: MatRef<f64>| {
-            let mut tree = tree.borrow_mut();
+            let mut evaluator = evaluator.borrow_mut();
             let params = EvaluatorParams {
-                tree: &mut **tree,
+                evaluator: &mut **evaluator,
                 target_points: targets,
                 coefficients: coeffs,
                 interpolant_settings: settings,
@@ -1120,9 +1163,9 @@ impl RBFInterpolator {
         };
 
         let mut gradient_fn = |targets: MatRef<f64>| {
-            let mut tree = tree.borrow_mut();
+            let mut evaluator = evaluator.borrow_mut();
             let params = EvaluatorParams {
-                tree: &mut **tree,
+                evaluator: &mut **evaluator,
                 target_points: targets,
                 coefficients: coeffs,
                 interpolant_settings: settings,
@@ -1269,7 +1312,7 @@ impl RBFInterpolator {
 }
 
 #[doc(hidden)]
-/// Internal: run one evaluation against `tree` and return interpolated values.
+/// Internal: run one evaluation against the selected backend.
 ///
 /// - Adds nugget on the diagonal when `add_nugget = true`.
 /// - Adds polynomial (monomial) contribution if a polynomial basis is enabled.
@@ -1286,38 +1329,39 @@ fn _evaluate(evaluator_params: EvaluatorParams) -> Result<(Mat<f64>, Option<Mat<
         None => evaluator_params.target_points,
     };
 
-    let (mut values, mut gradients) = match (
-        evaluator_params.evaluator_mode,
-        evaluator_params.evaluate_gradients,
-    ) {
-        (FmmEvaluatorMode::Leaves, false) => (
-            evaluator_params.tree.evaluate_leaves(
-                evaluator_params.coefficients.point_coefficients.as_mat_ref(),
-                eval_points,
-            )?,
-            None,
-        ),
-        (FmmEvaluatorMode::Leaves, true) => {
-            let (values, gradients) = evaluator_params.tree.evaluate_leaves_with_gradients(
-                evaluator_params.coefficients.point_coefficients.as_mat_ref(),
-                eval_points,
-            )?;
-            (values, Some(gradients))
-        }
-        (FmmEvaluatorMode::Full, false) => (
-            evaluator_params.tree.evaluate(
-                evaluator_params.coefficients.point_coefficients.as_mat_ref(),
-                eval_points,
-            )?,
-            None,
-        ),
-        (FmmEvaluatorMode::Full, true) => {
-            let (values, gradients) = evaluator_params.tree.evaluate_with_gradients(
-                evaluator_params.coefficients.point_coefficients.as_mat_ref(),
-                eval_points,
-            )?;
-            (values, Some(gradients))
-        }
+    let weights = evaluator_params
+        .coefficients
+        .point_coefficients
+        .as_mat_ref();
+    let with_gradients = evaluator_params.evaluate_gradients;
+    let (mut values, mut gradients) = match evaluator_params.evaluator {
+        Evaluator::Direct {
+            source_points,
+            kernel_params,
+            batch_size,
+        } => ferreus_rbf_utils::evaluate_direct(
+            eval_points,
+            source_points.as_mat_ref(),
+            weights,
+            kernel_params,
+            with_gradients,
+            *batch_size,
+        )?,
+        Evaluator::Fmm(tree) => match (evaluator_params.evaluator_mode, with_gradients) {
+            (FmmEvaluatorMode::Leaves, false) => {
+                (tree.evaluate_leaves(weights, eval_points)?, None)
+            }
+            (FmmEvaluatorMode::Full, false) => (tree.evaluate(weights, eval_points)?, None),
+            (FmmEvaluatorMode::Leaves, true) => {
+                let (values, gradients) =
+                    tree.evaluate_leaves_with_gradients(weights, eval_points)?;
+                (values, Some(gradients))
+            }
+            (FmmEvaluatorMode::Full, true) => {
+                let (values, gradients) = tree.evaluate_with_gradients(weights, eval_points)?;
+                (values, Some(gradients))
+            }
+        },
     };
 
     if let (Some(gt), Some(grads)) = (evaluator_params.global_trend, gradients.as_mut()) {

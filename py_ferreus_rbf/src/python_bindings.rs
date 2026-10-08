@@ -589,6 +589,8 @@ impl Params {
         ddm_params = None,
         fmm_params = None,
         naive_solve_threshold = None,
+        direct_eval_threshold = None,
+        direct_eval_batch_size = None,
         test_unique = None,
     ))]
     fn new(
@@ -597,8 +599,11 @@ impl Params {
         ddm_params: Option<DDMParams>,
         fmm_params: Option<FmmParams>,
         naive_solve_threshold: Option<usize>,
+        direct_eval_threshold: Option<usize>,
+        direct_eval_batch_size: Option<usize>,
         test_unique: Option<bool>,
     ) -> Self {
+        let defaults = config::Params::builder(kernel_type.into()).build();
         Self {
             inner: config::Params {
                 solver_type: solver_type.unwrap_or(Solvers::FGMRES).into(),
@@ -615,6 +620,10 @@ impl Params {
                     }
                 },
                 naive_solve_threshold: naive_solve_threshold.unwrap_or(4096),
+                direct_eval_threshold: direct_eval_threshold
+                    .unwrap_or(defaults.direct_eval_threshold),
+                direct_eval_batch_size: direct_eval_batch_size
+                    .unwrap_or(defaults.direct_eval_batch_size),
                 test_unique: test_unique.unwrap_or(true),
             },
         }

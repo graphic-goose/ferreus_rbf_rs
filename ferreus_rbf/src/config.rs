@@ -109,6 +109,16 @@ pub struct Params {
     /// rather than using iterative methods.
     pub naive_solve_threshold: usize,
 
+    /// Use direct evaluation when the source count is below this threshold.
+    /// Defaults to 4096; zero disables direct evaluation. Independent of fitting.
+    #[serde(default = "default_direct_eval_threshold")]
+    pub direct_eval_threshold: usize,
+
+    /// Maximum target points per direct-evaluation batch. Must be positive.
+    /// Defaults to 128; independent of FMM chunk sizing.
+    #[serde(default = "default_direct_eval_batch_size")]
+    pub direct_eval_batch_size: usize,
+
     /// Whether to enforce uniqueness checks on the input dataset.
     pub test_unique: bool,
 }
@@ -133,6 +143,8 @@ pub struct ParamsBuilder {
     pub ddm_params: DDMParams,
     pub fmm_params: FmmParams,
     pub naive_solve_threshold: usize,
+    pub direct_eval_threshold: usize,
+    pub direct_eval_batch_size: usize,
     pub test_unique: bool,
 }
 
@@ -144,6 +156,8 @@ impl ParamsBuilder {
             ddm_params: DDMParams::default(),
             fmm_params: FmmParams::new_defaults(kernel_type),
             naive_solve_threshold: 4096,
+            direct_eval_threshold: default_direct_eval_threshold(),
+            direct_eval_batch_size: default_direct_eval_batch_size(),
             test_unique: true,
         }
     }
@@ -172,6 +186,18 @@ impl ParamsBuilder {
         self
     }
 
+    /// Sets the source-count threshold for direct evaluation (zero forces FMM).
+    pub fn direct_eval_threshold(mut self, direct_eval_threshold: usize) -> Self {
+        self.direct_eval_threshold = direct_eval_threshold;
+        self
+    }
+
+    /// Sets the positive target batch size for direct evaluation.
+    pub fn direct_eval_batch_size(mut self, direct_eval_batch_size: usize) -> Self {
+        self.direct_eval_batch_size = direct_eval_batch_size;
+        self
+    }
+
     /// Enables or disables uniqueness checks.
     pub fn test_unique(mut self, test_unique: bool) -> Self {
         self.test_unique = test_unique;
@@ -185,9 +211,19 @@ impl ParamsBuilder {
             ddm_params: self.ddm_params,
             fmm_params: self.fmm_params,
             naive_solve_threshold: self.naive_solve_threshold,
+            direct_eval_threshold: self.direct_eval_threshold,
+            direct_eval_batch_size: self.direct_eval_batch_size,
             test_unique: self.test_unique,
         }
     }
+}
+
+fn default_direct_eval_threshold() -> usize {
+    4096
+}
+
+fn default_direct_eval_batch_size() -> usize {
+    128
 }
 
 /// Returns the default FMM interpolation order for the given kernel type.
@@ -220,7 +256,7 @@ pub struct FmmParams {
     /// Tolerance threshold for M2L compression.
     pub epsilon: f64,
 
-    /// Number of target points to evaluate in each chunk.
+    /// Number of target points to evaluate in each FMM chunk.
     pub eval_chunk_size: usize,
 }
 

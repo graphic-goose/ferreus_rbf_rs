@@ -9,8 +9,9 @@
 /////////////////////////////////////////////////////////////////////////////////////////////
 
 use crate::{KernelFromParams, KernelParams};
-use faer::{Mat, MatRef, RowRef};
+use faer::{Mat, MatMut, MatRef, RowRef};
 use ferreus_bbfmm::{FmmParams, FmmTree as TypedFmmTree, KernelFunction};
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::sync::Arc;
@@ -32,7 +33,7 @@ use std::sync::Arc;
 ///
 /// let wanted_rows = vec![0usize, 2];
 ///
-/// let sub_matrix = select_mat_rows(&matrix, &wanted_rows);
+/// let sub_matrix = select_mat_rows(matrix.as_ref(), &wanted_rows);
 ///
 /// assert_eq!(
 ///     sub_matrix,
@@ -312,6 +313,101 @@ where
     a_matrix
 }
 
+/// Direct summation over parallel target chunks without a target-by-source matrix.
+fn evaluate_direct_typed<K: KernelFunction + KernelFromParams + Sync, const WITH_GRADS: bool>(
+    target_points: MatRef<f64>,
+    source_points: MatRef<f64>,
+    weights: MatRef<f64>,
+    params: &KernelParams,
+    batch_size: usize,
+) -> Result<(Mat<f64>, Option<Mat<f64>>), ferreus_bbfmm::FmmError> {
+    assert!(
+        batch_size > 0,
+        "Direct evaluation batch size must be positive"
+    );
+    let kernel = K::from_params(params);
+    let dims = source_points.ncols();
+    assert!((1..=3).contains(&dims), "Unsupported source dimensionality");
+    assert_eq!(
+        target_points.ncols(),
+        dims,
+        "Target/source dimensionality mismatch"
+    );
+    assert_eq!(
+        weights.nrows(),
+        source_points.nrows(),
+        "Source/weight count mismatch"
+    );
+    let mut values = Mat::zeros(target_points.nrows(), weights.ncols());
+    let mut gradients =
+        WITH_GRADS.then(|| Mat::zeros(target_points.nrows(), weights.ncols() * dims));
+    // Each worker owns disjoint output rows. Keep source sums sequential so the
+    // result is independent of worker count, with no reductions or locks.
+    let evaluate_chunk = |target_points: MatRef<f64>,
+                          mut values: MatMut<f64>,
+                          mut gradients: Option<MatMut<f64>>| {
+        let mut gradient = [0.0; 3];
+        for i in 0..target_points.nrows() {
+            let target = target_points.row(i);
+            for j in 0..source_points.nrows() {
+                let source = source_points.row(j);
+                let value = if WITH_GRADS {
+                    kernel
+                        .evaluate_value_gradient(target, source, &mut gradient[..dims])
+                        .ok_or(ferreus_bbfmm::FmmError::KernelDoesNotSupportGradients)?
+                } else {
+                    kernel.evaluate(target, source)
+                };
+                for rhs in 0..weights.ncols() {
+                    let weight = weights[(j, rhs)];
+                    values[(i, rhs)] += weight * value;
+                    if let Some(grads) = gradients.as_mut() {
+                        for d in 0..dims {
+                            grads[(i, rhs * dims + d)] += weight * gradient[d];
+                        }
+                    }
+                }
+            }
+        }
+        Ok::<_, ferreus_bbfmm::FmmError>(())
+    };
+    // Amortize scheduling over chunks and avoid it altogether for small queries.
+    let work = target_points
+        .nrows()
+        .saturating_mul(source_points.nrows())
+        .saturating_mul(weights.ncols());
+    if target_points.nrows() > batch_size && work >= 32_768 {
+        if let Some(grads) = gradients.as_mut() {
+            target_points
+                .par_row_chunks(batch_size)
+                .zip(values.par_row_chunks_mut(batch_size))
+                .zip(grads.par_row_chunks_mut(batch_size))
+                .try_for_each(|((target_points, values), gradients)| {
+                    evaluate_chunk(target_points, values, Some(gradients))
+                })?;
+        } else {
+            target_points
+                .par_row_chunks(batch_size)
+                .zip(values.par_row_chunks_mut(batch_size))
+                .try_for_each(|(target_points, values)| {
+                    evaluate_chunk(target_points, values, None)
+                })?;
+        }
+    } else {
+        for start in (0..target_points.nrows()).step_by(batch_size) {
+            let count = batch_size.min(target_points.nrows() - start);
+            evaluate_chunk(
+                target_points.subrows(start, count),
+                values.as_mut().subrows_mut(start, count),
+                gradients
+                    .as_mut()
+                    .map(|grads| grads.as_mut().subrows_mut(start, count)),
+            )?;
+        }
+    }
+    Ok((values, gradients))
+}
+
 /// Builds a symmetric kernel matrix using a typed kernel function, adding a nugget on the diagonal.
 #[inline(always)]
 pub fn get_a_matrix_symmetric_solver_typed<K>(
@@ -491,6 +587,35 @@ macro_rules! for_each_kernel {
                 match self {
                     $( Self::$V(t) => &t.source_points, )*
                 }
+            }
+        }
+
+        /// Evaluates weighted kernel sums directly, optionally returning gradients.
+        /// Selects the concrete kernel once; the typed helper owns all batching
+        /// and parallelism. `batch_size` must be positive. Gradient columns are
+        /// grouped by right-hand side, then coordinate.
+        pub fn evaluate_direct(
+            target_points: MatRef<f64>,
+            source_points: MatRef<f64>,
+            weights: MatRef<f64>,
+            params: &KernelParams,
+            with_gradients: bool,
+            batch_size: usize,
+        ) -> Result<(Mat<f64>, Option<Mat<f64>>), ferreus_bbfmm::FmmError> {
+            match params.kernel_type {
+                $(
+                    KernelType::$V => {
+                        if with_gradients {
+                            crate::utils::evaluate_direct_typed::<$Kty, true>(
+                                target_points, source_points, weights, params, batch_size,
+                            )
+                        } else {
+                            crate::utils::evaluate_direct_typed::<$Kty, false>(
+                                target_points, source_points, weights, params, batch_size,
+                            )
+                        }
+                    }
+                ),*
             }
         }
 
