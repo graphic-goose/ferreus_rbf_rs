@@ -21,6 +21,7 @@ use std::collections::HashSet;
 
 use super::geometry::{Point, Triangle3};
 use faer::{MatRef, RowRef};
+use rayon::prelude::*;
 use rstar::{
     RTree, RTreeObject,
     primitives::{GeomWithData, Rectangle},
@@ -172,35 +173,39 @@ pub fn get_intersecting_triangles(vertices: MatRef<f64>, facets: MatRef<usize>) 
         .map(|(idx, f)| GeomWithData::new(triangle_aabb(triangle_points(vertices, f)), idx))
         .collect();
     let tree = RTree::bulk_load(rectangles);
-    let mut ids = HashSet::new();
+    let ids = (0..nfacets)
+        .into_par_iter()
+        .fold(HashSet::new, |mut ids, a_idx| {
+            let a_facet = facets.row(a_idx);
+            let a_ids = facet_ids(a_facet);
+            let a_tri = triangle_points(vertices, a_facet);
 
-    for item in tree.iter() {
-        let a_idx = item.data;
-        let a_facet = facets.row(a_idx);
-        let a_ids = facet_ids(a_facet);
-        let a_tri = triangle_points(vertices, a_facet);
+            for other in tree.locate_in_envelope_intersecting(&triangle_aabb(a_tri).envelope()) {
+                let b_idx = other.data;
+                if b_idx <= a_idx {
+                    continue;
+                }
 
-        for other in tree.locate_in_envelope_intersecting(&item.envelope()) {
-            let b_idx = other.data;
-            if b_idx <= a_idx {
-                continue;
+                let b_facet = facets.row(b_idx);
+                let b_ids = facet_ids(b_facet);
+                let b_tri = triangle_points(vertices, b_facet);
+                if is_true_self_intersection(
+                    &a_ids,
+                    &b_ids,
+                    a_tri,
+                    b_tri,
+                    DEFAULT_INTERSECTION_TOLERANCE,
+                ) {
+                    ids.insert(a_idx);
+                    ids.insert(b_idx);
+                }
             }
-
-            let b_facet = facets.row(b_idx);
-            let b_ids = facet_ids(b_facet);
-            let b_tri = triangle_points(vertices, b_facet);
-            if is_true_self_intersection(
-                &a_ids,
-                &b_ids,
-                a_tri,
-                b_tri,
-                DEFAULT_INTERSECTION_TOLERANCE,
-            ) {
-                ids.insert(a_idx);
-                ids.insert(b_idx);
-            }
-        }
-    }
+            ids
+        })
+        .reduce(HashSet::new, |mut a, b| {
+            a.extend(b);
+            a
+        });
 
     let mut ids: Vec<_> = ids.into_iter().collect();
     ids.sort_unstable();

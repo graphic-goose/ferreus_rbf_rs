@@ -15,6 +15,7 @@ crate-type = ["lib"]
 
 [dependencies]
 faer.workspace = true
+rayon.workspace = true
 rstar = "0.12.2"
 spade = "2.15.1"
 

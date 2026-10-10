@@ -365,6 +365,7 @@ name = "ferreus_rmt"
 version = "0.1.1"
 dependencies = [
  "faer",
+ "rayon",
  "rstar",
  "spade",
 ]

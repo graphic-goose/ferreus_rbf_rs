@@ -38,6 +38,7 @@ use crate::{
 };
 
 use faer::{Mat, MatRef};
+use rayon::prelude::*;
 
 pub use crate::aabb_clipping::AABB;
 
@@ -216,6 +217,26 @@ fn add_ijk(a: [i64; 3], b: [i64; 3]) -> [i64; 3] {
     [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
 }
 
+/// Cache the six marching cases per owner. Missing/non-finite tetrahedra use the empty case.
+/// Only six bytes per owner are retained, rather than caching full edge coordinates.
+fn tetrahedron_cases(keys: &[[i64; 3]], evaluated: &HashMap<[i64; 3], f64>) -> Vec<[u8; 6]> {
+    keys.par_iter()
+        .map(|key| {
+            let values = get_edge_points::<8>(key)
+                .map(|corner| evaluated.get(&corner).copied().filter(|v| v.is_finite()));
+            OWNED_TET_EDGES.map(|[ea, eb, ec]| {
+                match [values[0], values[ea + 1], values[eb + 1], values[ec + 1]] {
+                    [Some(a), Some(b), Some(c), Some(d)] => [a, b, c, d]
+                        .iter()
+                        .enumerate()
+                        .fold(0, |case, (i, v)| case | ((is_inside(*v) as u8) << i)),
+                    _ => 0,
+                }
+            })
+        })
+        .collect()
+}
+
 /// Marches the owned tetrahedra for `keys`, resolving edge vertices and emitting triangle ids.
 ///
 /// `resolve` maps lattice edges to mesh vertex ids. `emit` receives each non-degenerate triangle
@@ -223,44 +244,26 @@ fn add_ijk(a: [i64; 3], b: [i64; 3]) -> [i64; 3] {
 #[inline]
 fn march_tets<Resolve, Emit>(
     keys: &[[i64; 3]],
-    evaluated: &HashMap<[i64; 3], f64>,
+    cases: &[[u8; 6]],
     mut resolve: Resolve,
     mut emit: Emit,
 ) where
     Resolve: FnMut([i64; 3], [i64; 3]) -> Option<usize>,
     Emit: FnMut([usize; 3]),
 {
-    for &c0 in keys {
-        for [ea, eb, ec] in OWNED_TET_EDGES {
+    for (&c0, cases) in keys.iter().zip(cases) {
+        for ([ea, eb, ec], &case) in OWNED_TET_EDGES.iter().zip(cases) {
+            if case == 0 || case == 15 {
+                continue;
+            }
             let corners = [
                 c0,
-                add_ijk(c0, edge_delta(ea)),
-                add_ijk(c0, edge_delta(eb)),
-                add_ijk(c0, edge_delta(ec)),
+                add_ijk(c0, edge_delta(*ea)),
+                add_ijk(c0, edge_delta(*eb)),
+                add_ijk(c0, edge_delta(*ec)),
             ];
 
-            let vals = match [
-                evaluated.get(&corners[0]).copied(),
-                evaluated.get(&corners[1]).copied(),
-                evaluated.get(&corners[2]).copied(),
-                evaluated.get(&corners[3]).copied(),
-            ] {
-                [Some(v0), Some(v1), Some(v2), Some(v3)]
-                    if v0.is_finite() && v1.is_finite() && v2.is_finite() && v3.is_finite() =>
-                {
-                    [v0, v1, v2, v3]
-                }
-                _ => continue,
-            };
-
-            let mut case = 0usize;
-            for (i, s) in vals.iter().enumerate() {
-                if is_inside(*s) {
-                    case |= 1 << i;
-                }
-            }
-
-            for tri in MT_TABLE[case] {
+            for tri in MT_TABLE[case as usize] {
                 let mut vids = [0usize; 3];
                 let mut ok = true;
                 for i in 0..3 {
@@ -280,6 +283,33 @@ fn march_tets<Resolve, Emit>(
             }
         }
     }
+}
+
+/// March independent owner ranges into local facet buffers, preserving owner order.
+fn build_facets(
+    keys: &[[i64; 3]],
+    cases: &[[u8; 6]],
+    edge_ref: &HashMap<([i64; 3], usize), usize>,
+) -> Vec<usize> {
+    let batches: Vec<Vec<usize>> = keys
+        .par_chunks(512)
+        .zip(cases.par_chunks(512))
+        .map(|(keys, cases)| {
+            let mut facets = Vec::new();
+            march_tets(
+                keys,
+                cases,
+                |u, v| edge_ref_get(edge_ref, u, v),
+                |tri| facets.extend_from_slice(&tri),
+            );
+            facets
+        })
+        .collect();
+    let mut facets = Vec::with_capacity(batches.iter().map(Vec::len).sum());
+    for batch in batches {
+        facets.extend(batch);
+    }
+    facets
 }
 
 /// Returns whether a scalar value lies inside the extracted isosurface.
@@ -568,6 +598,7 @@ where
         let mut next_wavefront: HashSet<[i64; 3]> = HashSet::new();
         let mut unevaluated_world: Vec<f64> = Vec::new();
         let mut unevaluated_ijk: Vec<[i64; 3]> = Vec::new();
+        let mut pending = HashSet::new();
 
         // Since the main use-case for this crate is RBF evaluations, which can be expensive,
         // it's far more efficient to collect all the unnevaluated sample points in each wavefront
@@ -576,7 +607,7 @@ where
             sample_points.entry(*cell).or_insert(SamplePoint::default());
             let corners = get_edge_points::<8>(cell);
             for corner in corners {
-                if !evaluated.contains_key(&corner) {
+                if !evaluated.contains_key(&corner) && pending.insert(corner) {
                     unevaluated_ijk.push(corner);
                     unevaluated_world.extend_from_slice(lattice.ijk_to_world(corner).as_slice());
                 }
@@ -594,8 +625,7 @@ where
 
         for cell in &wavefront {
             let corners = get_edge_points::<8>(&cell);
-            let corner_vals: Vec<f64> =
-                corners.iter().map(|c| *evaluated.get(c).unwrap()).collect();
+            let corner_vals = corners.map(|c| *evaluated.get(&c).unwrap());
             let s0 = corner_vals[0];
             let inside0 = is_inside(s0);
 
@@ -679,6 +709,7 @@ where
         }
         wavefront = next_wavefront;
     }
+    drop(seen_cells);
 
     // Evaluate any missing lattice points connected to lattice points with intersections for topology tests.
     let mut missing: HashMap<[i64; 3], [f64; 3]> = HashMap::new();
@@ -710,6 +741,7 @@ where
             evaluated.insert(*ijk, val[0] - isovalue);
         }
     }
+    drop(missing);
 
     emit_progress(
         progress_callback,
@@ -719,95 +751,113 @@ where
     );
 
     let keys: Vec<[i64; 3]> = sample_points.keys().copied().collect();
-    let mut candidates: Vec<VertexCandidate> = Vec::new();
-    let mut candidate_ref: HashMap<([i64; 3], usize), usize> = HashMap::new();
-    let mut num_closed_surface = 0usize;
-    let mut num_multi_hole = 0usize;
-    let mut num_flat_hole = 0usize;
-    let mut num_multi_surface = 0usize;
-    let mut num_simple_surface = 0usize;
+    // Each chunk reads immutable lattice state and owns its candidates and statistics.
+    let candidate_batches: Vec<_> = keys
+        .par_chunks(512)
+        .map(|keys| {
+            let mut candidates = Vec::new();
+            let mut counts = [0usize; 5];
+            // Cluster the near intersections for each sample point.
+            for ijk in keys {
+                let sample = sample_points.get(ijk).unwrap();
+                let intersections = sample.intersections;
 
-    // Cluster the near intersections for each sample point.
-    for ijk in &keys {
-        let sample = sample_points.get(ijk).unwrap();
-        let intersections = sample.intersections;
-
-        if intersections == 0 {
-            continue;
-        }
-
-        let should_cluster = !matches!(cluster_method, ClusterMethod::None);
-
-        let topology_result =
-            topology::test_topology(intersections, should_cluster, *ijk, &evaluated);
-
-        match topology_result.case {
-            TopologyCase::ClosedSurface => num_closed_surface += 1,
-            TopologyCase::MultiHole => num_multi_hole += 1,
-            TopologyCase::FlatHole => num_flat_hole += 1,
-            TopologyCase::MultiSurface => num_multi_surface += 1,
-            TopologyCase::SimpleSurface => num_simple_surface += 1,
-            _ => {}
-        }
-
-        for cluster in topology_result.iter_clusters() {
-            let mut edge_endpoints: Vec<([i64; 3], [i64; 3])> =
-                Vec::with_capacity(cluster.edges.len());
-            let mut pts: Vec<[f64; 3]> = Vec::new();
-
-            for &edge in &cluster.edges {
-                let [di, dj, dk] = EDGE_DELTAS[edge as usize];
-
-                let nbr = [ijk[0] + di as i64, ijk[1] + dj as i64, ijk[2] + dk as i64];
-
-                if let Some(interpolated_point) =
-                    edge_intersection_point(*ijk, nbr, &evaluated, &lattice)
-                {
-                    edge_endpoints.push((*ijk, nbr));
-                    pts.push(interpolated_point);
+                if intersections == 0 {
+                    continue;
                 }
-            }
 
-            if pts.len() == 0 {
-                continue;
-            }
+                let should_cluster = !matches!(cluster_method, ClusterMethod::None);
 
-            let candidate = match cluster_method {
-                ClusterMethod::CurvatureWeighted => {
-                    curvature_weighting::curvature_weighted_cluster_point(
-                        edge_endpoints.as_slice(),
-                        &evaluated,
-                        &lattice,
-                    )
-                    .unwrap_or_else(|| {
-                        if pts.len() == 1 {
-                            pts[0]
-                        } else {
-                            average_point(&pts)
+                let topology_result =
+                    topology::test_topology(intersections, should_cluster, *ijk, &evaluated);
+
+                match topology_result.case {
+                    TopologyCase::ClosedSurface => counts[0] += 1,
+                    TopologyCase::MultiHole => counts[1] += 1,
+                    TopologyCase::FlatHole => counts[2] += 1,
+                    TopologyCase::MultiSurface => counts[3] += 1,
+                    TopologyCase::SimpleSurface => counts[4] += 1,
+                    _ => {}
+                }
+
+                for cluster in topology_result.iter_clusters() {
+                    let mut edge_endpoints: Vec<([i64; 3], [i64; 3])> =
+                        Vec::with_capacity(cluster.edges.len());
+                    let mut pts: Vec<[f64; 3]> = Vec::new();
+
+                    for &edge in &cluster.edges {
+                        let [di, dj, dk] = EDGE_DELTAS[edge as usize];
+
+                        let nbr = [ijk[0] + di as i64, ijk[1] + dj as i64, ijk[2] + dk as i64];
+
+                        if let Some(interpolated_point) =
+                            edge_intersection_point(*ijk, nbr, &evaluated, &lattice)
+                        {
+                            edge_endpoints.push((*ijk, nbr));
+                            pts.push(interpolated_point);
                         }
-                    })
-                }
-                ClusterMethod::Average | ClusterMethod::None => {
-                    if pts.len() == 1 {
-                        pts[0]
-                    } else {
-                        average_point(&pts)
                     }
-                }
-            };
-            let candidate_id = candidates.len();
-            for &(u, v) in &edge_endpoints {
-                if let Some((owner, _other, lab)) = get_edge_owner(u, v) {
-                    let key = (owner, lab);
-                    candidate_ref.insert(key, candidate_id);
+
+                    if pts.len() == 0 {
+                        continue;
+                    }
+
+                    let candidate = match cluster_method {
+                        ClusterMethod::CurvatureWeighted => {
+                            curvature_weighting::curvature_weighted_cluster_point(
+                                edge_endpoints.as_slice(),
+                                &evaluated,
+                                &lattice,
+                            )
+                            .unwrap_or_else(|| {
+                                if pts.len() == 1 {
+                                    pts[0]
+                                } else {
+                                    average_point(&pts)
+                                }
+                            })
+                        }
+                        ClusterMethod::Average | ClusterMethod::None => {
+                            if pts.len() == 1 {
+                                pts[0]
+                            } else {
+                                average_point(&pts)
+                            }
+                        }
+                    };
+                    candidates.push(VertexCandidate {
+                        point: candidate,
+                        edge_endpoints,
+                        owner: *ijk,
+                    });
                 }
             }
-
-            candidates.push(VertexCandidate {
-                point: candidate,
-                edge_endpoints,
-                owner: *ijk,
-            });
+            (candidates, counts)
+        })
+        .collect();
+    drop(sample_points);
+    let mut candidates: Vec<VertexCandidate> =
+        Vec::with_capacity(candidate_batches.iter().map(|(batch, _)| batch.len()).sum());
+    let mut counts = [0usize; 5];
+    for (batch, batch_counts) in candidate_batches {
+        candidates.extend(batch);
+        for i in 0..5 {
+            counts[i] += batch_counts[i];
+        }
+    }
+    let [
+        num_closed_surface,
+        num_multi_hole,
+        num_flat_hole,
+        num_multi_surface,
+        num_simple_surface,
+    ] = counts;
+    let mut candidate_ref = HashMap::new();
+    for (candidate_id, candidate) in candidates.iter().enumerate() {
+        for &(u, v) in &candidate.edge_endpoints {
+            if let Some((owner, _other, lab)) = get_edge_owner(u, v) {
+                candidate_ref.insert((owner, lab), candidate_id);
+            }
         }
     }
     let mut predicted_edge_counts: HashMap<(usize, usize), usize> = HashMap::new();
@@ -830,6 +880,8 @@ where
         0.82,
     );
 
+    let tet_cases = tetrahedron_cases(&keys, &evaluated);
+
     // The paper suggests the topology tests should guarantee that clustering of near-intersections
     // that pass the topology tests won't produce non-manifold edges. However, from testing with
     // various real-world RBF datasets this doesn't always prove to be true, unfortunately.
@@ -838,7 +890,7 @@ where
     // unclustered vertices.
     march_tets(
         &keys,
-        &evaluated,
+        &tet_cases,
         |u, v| {
             let (owner, _other, lab) = get_edge_owner(u, v)?;
             let key = (owner, lab);
@@ -851,6 +903,7 @@ where
             }
         },
     );
+    drop(candidate_ref);
 
     let mut split_candidates = HashSet::new();
     for ((a, b), count) in predicted_edge_counts {
@@ -868,7 +921,7 @@ where
     let mut cluster_vertex_owner: HashMap<usize, [i64; 3]> = HashMap::new();
     let mut owner_cluster_vertices: HashMap<[i64; 3], Vec<usize>> = HashMap::new();
 
-    for (candidate_id, candidate) in candidates.iter().enumerate() {
+    for (candidate_id, candidate) in candidates.into_iter().enumerate() {
         if split_candidates.contains(&candidate_id) {
             for (u, v) in &candidate.edge_endpoints {
                 if let Some(p) = edge_intersection_point(*u, *v, &evaluated, &lattice) {
@@ -878,27 +931,21 @@ where
             }
         } else {
             let vid = push_vertex(&mut vertices, candidate.point);
+            for (u, v) in &candidate.edge_endpoints {
+                edge_ref_set(&mut edge_ref, *u, *v, vid);
+            }
             if candidate.edge_endpoints.len() > 1 {
-                cluster_vertex_edges.insert(vid, candidate.edge_endpoints.clone());
+                cluster_vertex_edges.insert(vid, candidate.edge_endpoints);
                 cluster_vertex_owner.insert(vid, candidate.owner);
                 owner_cluster_vertices
                     .entry(candidate.owner)
                     .or_default()
                     .push(vid);
             }
-            for (u, v) in &candidate.edge_endpoints {
-                edge_ref_set(&mut edge_ref, *u, *v, vid);
-            }
         }
     }
-    let mut facets = Vec::new();
-
-    march_tets(
-        &keys,
-        &evaluated,
-        |u, v| edge_ref_get(&edge_ref, u, v),
-        |[a, b, c]| facets.extend_from_slice(&[a, b, c]),
-    );
+    drop(split_candidates);
+    let mut facets = build_facets(&keys, &tet_cases, &edge_ref);
 
     if !cluster_vertex_edges.is_empty() && !facets.is_empty() {
         let mut non_manifold_rollback_count = 0usize;
@@ -927,13 +974,7 @@ where
 
             non_manifold_rollback_count += rolled_back_count;
 
-            facets.clear();
-            march_tets(
-                &keys,
-                &evaluated,
-                |u, v| edge_ref_get(&edge_ref, u, v),
-                |[a, b, c]| facets.extend_from_slice(&[a, b, c]),
-            );
+            facets = build_facets(&keys, &tet_cases, &edge_ref);
         }
 
         emit_message(
@@ -1002,13 +1043,7 @@ where
                 if rolled_back_count > 0 {
                     self_intersection_rollback_count += rolled_back_count;
 
-                    facets.clear();
-                    march_tets(
-                        &keys,
-                        &evaluated,
-                        |u, v| edge_ref_get(&edge_ref, u, v),
-                        |[a, b, c]| facets.extend_from_slice(&[a, b, c]),
-                    );
+                    facets = build_facets(&keys, &tet_cases, &edge_ref);
                 }
             }
 
@@ -1020,6 +1055,15 @@ where
             );
         }
     }
+
+    // Extraction state is no longer needed. Release it before allocating clipped/cleaned buffers.
+    drop(tet_cases);
+    drop(keys);
+    drop(evaluated);
+    drop(edge_ref);
+    drop(cluster_vertex_edges);
+    drop(cluster_vertex_owner);
+    drop(owner_cluster_vertices);
 
     // Clip the facets to the axis-aligned bounding box extents, to ensure a clean cut.
     let (vertices, facets) = clip_mesh_to_aabb(vertices, facets, extents, bbox_eps);

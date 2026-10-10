@@ -51,7 +51,7 @@ pub(crate) fn bbox_eps(extents: AABB<f64>) -> f64 {
 ///
 /// The input mesh is represented by a flat row-major vertex array and a flat
 /// triangle-index array. The returned mesh uses newly generated vertices and
-/// facets, because clipping may split triangles along box planes.
+/// facets for split triangles, while retaining shared vertices for interior triangles.
 pub(crate) fn clip_mesh_to_aabb(
     vertices: Vec<f64>,
     facets: Vec<usize>,
@@ -67,9 +67,41 @@ pub(crate) fn clip_mesh_to_aabb(
         BoxPlane::ZMax,
     ];
     let mut clipped_vertices = Vec::new();
-    let mut clipped_facets = Vec::new();
+    let mut clipped_facets = Vec::with_capacity(facets.len());
+    let mut interior_vertex_ids = vec![usize::MAX; vertices.len() / 3];
 
     for tri in facets.chunks_exact(3) {
+        if tri.iter().all(|&vid| {
+            point_inside_aabb(
+                [
+                    vertices[3 * vid],
+                    vertices[3 * vid + 1],
+                    vertices[3 * vid + 2],
+                ],
+                extents,
+                eps,
+            )
+        }) {
+            for &vid in tri {
+                if interior_vertex_ids[vid] == usize::MAX {
+                    interior_vertex_ids[vid] = push_vertex(
+                        &mut clipped_vertices,
+                        snap_near_bbox(
+                            [
+                                vertices[3 * vid],
+                                vertices[3 * vid + 1],
+                                vertices[3 * vid + 2],
+                            ],
+                            extents,
+                            eps,
+                        ),
+                    );
+                }
+                clipped_facets.push(interior_vertex_ids[vid]);
+            }
+            continue;
+        }
+
         let mut polygon = tri
             .iter()
             .map(|&vid| {

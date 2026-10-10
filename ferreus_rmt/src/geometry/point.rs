@@ -24,9 +24,6 @@ pub trait Point {
     /// Returns the component-wise product.
     fn mul(self, other: Self) -> Self;
 
-    /// Returns the component-wise quotient.
-    fn div(self, other: Self) -> Self;
-
     /// Scales every component by `s`.
     fn scale(self, s: f64) -> Self;
 
@@ -70,10 +67,6 @@ impl Point for [f64; 3] {
 
     fn mul(self, other: Self) -> Self {
         [self[0] * other[0], self[1] * other[1], self[2] * other[2]]
-    }
-
-    fn div(self, other: Self) -> Self {
-        [self[0] / other[0], self[1] / other[1], self[2] / other[2]]
     }
 
     fn scale(self, s: f64) -> [f64; 3] {
