@@ -471,7 +471,7 @@ impl KernelFromParams for Cubic2RbfKernel {
 pub struct InverseMultiquadraticRbfKernel;
 
 impl InverseMultiquadraticRbfKernel {
-    const KM_SQ: f64 = 42.25;  // 6.5 ^ 2
+    const KM_SQ: f64 = 42.25; // 6.5 ^ 2
 
     #[inline(always)]
     pub fn phi(&self, r: f64) -> f64 {

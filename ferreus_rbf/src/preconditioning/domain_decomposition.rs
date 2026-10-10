@@ -26,7 +26,10 @@
 //!     In: Lirkov, I., Margenov, S. (eds) Large-Scale Scientific Computing. LSSC 2017.
 
 use rayon::prelude::*;
-use std::{collections::{HashMap, VecDeque}, sync::Arc};
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::Arc,
+};
 
 use crate::{
     common, config::DDMParams, domain::Domain, global_trend::GlobalTrendTransform,
@@ -154,9 +157,7 @@ impl DDMTree {
 
                 // If splitting would still produce leaves above the threshold, keep splitting;
                 // otherwise, accept as leaves.
-                if num_domain_points as f64
-                    >= 2.0 * ddm_params.leaf_threshold as f64
-                {
+                if num_domain_points as f64 >= 2.0 * ddm_params.leaf_threshold as f64 {
                     active_domains.extend(new_domains);
                 } else {
                     new_domains.iter_mut().for_each(|domain| {
@@ -175,9 +176,8 @@ impl DDMTree {
             }
 
             // Calculate the exact number of coarse points required for the next level.
-            let remaining_level_reductions = num_level_reductions
-                .saturating_sub(levels.len())
-                .max(1);
+            let remaining_level_reductions =
+                num_level_reductions.saturating_sub(levels.len()).max(1);
 
             let num_level_coarse_points = get_num_level_coarse_points(
                 active_point_indices.len(),
@@ -196,11 +196,7 @@ impl DDMTree {
                 get_domain_coarse_quotas(&domain_internal_sizes, num_level_coarse_points);
 
             // Build an R-tree over all points in the level for nearest neighbour queries.
-            let rtree = rtree::build_nd_point_rtree(
-                dimensions,
-                points,
-                &active_point_indices
-            );
+            let rtree = rtree::build_nd_point_rtree(dimensions, points, &active_point_indices);
 
             // Find symmetric cross-domain k-nearest-neighbour endpoints.
             let mut overlap_endpoints: Vec<(usize, usize)> = active_point_indices
@@ -209,11 +205,9 @@ impl DDMTree {
                     let mut local_endpoints = Vec::new();
 
                     let source_owner = *owner_map.get(source_index).unwrap();
-                    let coordinates: Vec<f64> =
-                        points.row(*source_index).iter().copied().collect();
+                    let coordinates: Vec<f64> = points.row(*source_index).iter().copied().collect();
 
-                    for (target_index, _) in
-                        rtree.nearest(&coordinates, ddm_params.overlap_knn + 1)
+                    for (target_index, _) in rtree.nearest(&coordinates, ddm_params.overlap_knn + 1)
                     {
                         if target_index == *source_index {
                             continue;
@@ -238,8 +232,7 @@ impl DDMTree {
             overlap_endpoints.par_sort_unstable();
             overlap_endpoints.dedup();
 
-            let mut domain_overlap_indices =
-                vec![Vec::new(); fine_level.leaf_domains.len()];
+            let mut domain_overlap_indices = vec![Vec::new(); fine_level.leaf_domains.len()];
 
             for (domain_index, point_index) in overlap_endpoints {
                 domain_overlap_indices[domain_index].push(point_index);
@@ -256,8 +249,7 @@ impl DDMTree {
 
                 let num_domain_internal_points = internal_indices.len();
 
-                let internal_points =
-                    ferreus_rbf_utils::select_mat_rows(points, &internal_indices);
+                let internal_points = ferreus_rbf_utils::select_mat_rows(points, &internal_indices);
 
                 let sample_size = num_domain_internal_points.min(domain_coarse_quotas[i]);
 
@@ -329,10 +321,7 @@ impl DDMTree {
             level_course_points.sort();
             level_course_points.dedup();
 
-            assert_eq!(
-                level_course_points.len(),
-                num_level_coarse_points
-            );
+            assert_eq!(level_course_points.len(), num_level_coarse_points);
 
             // The per-leaf coarse selections become the next level’s active set.
             active_point_indices = level_course_points;
@@ -390,8 +379,7 @@ fn get_num_level_reductions(
     let mut num_level_reductions = 0;
 
     while covered_points < num_points {
-        covered_points = covered_points
-            .saturating_mul(coarse_reduction_factor);
+        covered_points = covered_points.saturating_mul(coarse_reduction_factor);
 
         num_level_reductions += 1;
     }
@@ -405,20 +393,15 @@ fn get_num_level_coarse_points(
     coarse_threshold: usize,
     remaining_level_reductions: usize,
 ) -> usize {
-    let coarse_ratio =
-        (coarse_threshold as f64 / num_active_points as f64)
-            .powf(1.0 / remaining_level_reductions as f64);
+    let coarse_ratio = (coarse_threshold as f64 / num_active_points as f64)
+        .powf(1.0 / remaining_level_reductions as f64);
 
-    ((num_active_points as f64 * coarse_ratio).ceil() as usize)
-        .clamp(1, num_active_points - 1)
+    ((num_active_points as f64 * coarse_ratio).ceil() as usize).clamp(1, num_active_points - 1)
 }
 
 /// Distributes an exact coarse-point count between domains in proportion
 /// to their internal point counts.
-fn get_domain_coarse_quotas(
-    domain_sizes: &[usize],
-    num_coarse_points: usize,
-) -> Vec<usize> {
+fn get_domain_coarse_quotas(domain_sizes: &[usize], num_coarse_points: usize) -> Vec<usize> {
     let total_points = domain_sizes.iter().sum::<usize>();
     let num_coarse_points = num_coarse_points.min(total_points);
 
@@ -426,77 +409,52 @@ fn get_domain_coarse_quotas(
         return vec![0; domain_sizes.len()];
     }
 
-    let num_nonempty_domains = domain_sizes
-        .iter()
-        .filter(|&&size| size > 0)
-        .count();
+    let num_nonempty_domains = domain_sizes.iter().filter(|&&size| size > 0).count();
 
-    let reserve_one_per_domain =
-        num_coarse_points >= num_nonempty_domains;
+    let reserve_one_per_domain = num_coarse_points >= num_nonempty_domains;
 
     // Give each nonempty domain one coverage point when the global
     // coarse-point budget permits it.
     let mut domain_quotas: Vec<usize> = domain_sizes
         .iter()
-        .map(|&size| {
-            usize::from(reserve_one_per_domain && size > 0)
-        })
+        .map(|&size| usize::from(reserve_one_per_domain && size > 0))
         .collect();
 
     let num_reserved_points = domain_quotas.iter().sum::<usize>();
-    let num_remaining_points =
-        num_coarse_points - num_reserved_points;
+    let num_remaining_points = num_coarse_points - num_reserved_points;
 
     if num_remaining_points == 0 {
         return domain_quotas;
     }
 
-    let total_remaining_capacity =
-        total_points - num_reserved_points;
+    let total_remaining_capacity = total_points - num_reserved_points;
 
-    let mut remainders =
-        Vec::with_capacity(domain_sizes.len());
+    let mut remainders = Vec::with_capacity(domain_sizes.len());
 
     // Allocate the remaining budget in proportion to the capacity
     // remaining in each domain.
-    for (domain_index, (&domain_size, quota)) in domain_sizes
-        .iter()
-        .zip(&mut domain_quotas)
-        .enumerate()
+    for (domain_index, (&domain_size, quota)) in
+        domain_sizes.iter().zip(&mut domain_quotas).enumerate()
     {
         let capacity = domain_size - *quota;
-        let numerator =
-            num_remaining_points.saturating_mul(capacity);
+        let numerator = num_remaining_points.saturating_mul(capacity);
 
         *quota += numerator / total_remaining_capacity;
 
-        remainders.push((
-            numerator % total_remaining_capacity,
-            domain_index,
-        ));
+        remainders.push((numerator % total_remaining_capacity, domain_index));
     }
 
     // Assign the points lost through integer division to the domains
     // with the largest fractional remainders.
-    remainders.sort_unstable_by(|a, b| {
-        b.0.cmp(&a.0)
-            .then_with(|| a.1.cmp(&b.1))
-    });
+    remainders.sort_unstable_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
 
-    let num_unassigned_points =
-        num_coarse_points - domain_quotas.iter().sum::<usize>();
+    let num_unassigned_points = num_coarse_points - domain_quotas.iter().sum::<usize>();
 
-    for &(_, domain_index) in remainders
-        .iter()
-        .take(num_unassigned_points)
-    {
+    for &(_, domain_index) in remainders.iter().take(num_unassigned_points) {
         domain_quotas[domain_index] += 1;
     }
 
-    assert_eq!(
-        domain_quotas.iter().sum::<usize>(),
-        num_coarse_points
-    );
+    assert_eq!(domain_quotas.iter().sum::<usize>(), num_coarse_points);
 
     domain_quotas
 }
@@ -624,7 +582,12 @@ mod tests {
         };
         let interpolant_settings = generate_interpolant_settings();
         let points = generate_points(80, dim);
-        let ddm = DDMTree::new(points.as_ref(), &interpolant_settings, params.clone(), &None);
+        let ddm = DDMTree::new(
+            points.as_ref(),
+            &interpolant_settings,
+            params.clone(),
+            &None,
+        );
 
         if let Some(lvl0) = ddm.levels.first() {
             for dom in &lvl0.leaf_domains {

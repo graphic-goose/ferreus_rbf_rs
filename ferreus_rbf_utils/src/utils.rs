@@ -10,7 +10,7 @@
 
 use crate::{KernelFromParams, KernelParams};
 use faer::{Mat, MatMut, MatRef, RowRef};
-use ferreus_bbfmm::{FmmParams, FmmTree as TypedFmmTree, KernelFunction};
+use ferreus_bbfmm::{EvaluationTargets, FmmParams, FmmTree as TypedFmmTree, KernelFunction};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
@@ -482,18 +482,37 @@ macro_rules! for_each_kernel {
         }
 
         impl FmmTree {
-            /// Constructs a new erased `FmmTree` from points and parameters by
-            /// instantiating the appropriate typed tree for `kernel_type`.
             #[allow(clippy::too_many_arguments)]
             #[inline]
+            /// Constructs a new erased `FmmTree` from points and parameters by
+            /// instantiating the appropriate typed tree for `kernel_type`.
             pub fn new(
                 source_points: Arc<Mat<f64>>,
                 interpolation_order: usize,
                 kernel_params: KernelParams,
-                adaptive_tree: bool,
                 sparse: bool,
                 extents: Option<Vec<f64>>,
                 params: Option<FmmParams>,
+            ) -> Self {
+                Self::new_with_targets(
+                    source_points, interpolation_order, kernel_params,
+                   sparse, extents, params, None
+                )
+            }
+
+            /// Constructs a new erased `FmmTree` from points and parameters by
+            /// instantiating the appropriate typed tree for `kernel_type`.
+            /// This variant uses target points to refine the tree.
+            #[allow(clippy::too_many_arguments)]
+            #[inline]
+            pub fn new_with_targets(
+                source_points: Arc<Mat<f64>>,
+                interpolation_order: usize,
+                kernel_params: KernelParams,
+                sparse: bool,
+                extents: Option<Vec<f64>>,
+                params: Option<FmmParams>,
+                targets: Option<EvaluationTargets<'_>>
             ) -> Self {
                 let kernel_type = kernel_params.kernel_type;
 
@@ -502,14 +521,14 @@ macro_rules! for_each_kernel {
                         KernelType::$V => {
                             // Build kernel K from shared KernelParams
                             let k: $Kty = <$Kty as KernelFromParams>::from_params(&kernel_params);
-                            let tree = TypedFmmTree::new(
+                            let tree = TypedFmmTree::new_with_targets(
                                 source_points,
                                 interpolation_order,
                                 k,
-                                adaptive_tree,
                                 sparse,
                                 extents,
                                 params,
+                                targets,
                             );
                             FmmTree::$V(tree)
                         }
@@ -527,9 +546,9 @@ macro_rules! for_each_kernel {
 
             /// Sets local expansion coefficients for the underlying FMM tree.
             #[inline]
-            pub fn set_local_coefficients(&mut self, w: faer::MatRef<'_, f64>) {
+            pub fn set_local_coefficients(&mut self) {
                 match self {
-                    $( Self::$V(t) => t.set_local_coefficients(w), )*
+                    $( Self::$V(t) => t.set_local_coefficients(), )*
                 }
             }
 
@@ -579,6 +598,39 @@ macro_rules! for_each_kernel {
                 match self {
                     $( Self::$V(t) => t.evaluate_leaves_with_gradients(w, x), )*
                 }
+            }
+
+            /// Configured maximum target chunk size.
+            pub fn target_chunk_size(&self) -> usize {
+                match self { $( Self::$V(t) => t.target_chunk_size(), )* }
+            }
+
+            /// Evaluate a regular grid without a full coordinate matrix.
+            pub fn evaluate_grid(&mut self, w: faer::MatRef<'_, f64>, grid: &ferreus_bbfmm::TargetGrid)
+                -> Result<Mat<f64>, ferreus_bbfmm::FmmError>
+            {
+                match self { $( Self::$V(t) => t.evaluate_grid(w, grid), )* }
+            }
+
+            /// Evaluate a regular grid without a full coordinate matrix.
+            pub fn evaluate_grid_with_gradients(&mut self, w: faer::MatRef<'_, f64>, grid: &ferreus_bbfmm::TargetGrid)
+                -> Result<(Mat<f64>, Mat<f64>), ferreus_bbfmm::FmmError>
+            {
+                match self { $( Self::$V(t) => t.evaluate_grid_with_gradients(w, grid), )* }
+            }
+
+            /// Evaluate a regular grid without a full coordinate matrix.
+            pub fn evaluate_grid_leaves(&mut self, w: faer::MatRef<'_, f64>, grid: &ferreus_bbfmm::TargetGrid)
+                -> Result<Mat<f64>, ferreus_bbfmm::FmmError>
+            {
+                match self { $( Self::$V(t) => t.evaluate_grid_leaves(w, grid), )* }
+            }
+
+            /// Evaluate a regular grid without a full coordinate matrix.
+            pub fn evaluate_grid_leaves_with_gradients(&mut self, w: faer::MatRef<'_, f64>, grid: &ferreus_bbfmm::TargetGrid)
+                -> Result<(Mat<f64>, Mat<f64>), ferreus_bbfmm::FmmError>
+            {
+                match self { $( Self::$V(t) => t.evaluate_grid_leaves_with_gradients(w, grid), )* }
             }
 
             /// Returns the source points used to build the FMM tree.

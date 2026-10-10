@@ -28,7 +28,7 @@ use super::{
     constants::{EDGE_DELTAS, U, V, W},
     geometry::Point,
 };
-use faer::{linalg::solvers::DenseSolveCore, mat, Col, prelude::*};
+use faer::{Col, linalg::solvers::DenseSolveCore, mat, prelude::*};
 use std::array;
 
 const OPEN_CLIP_IJK_PADDING: i64 = 2;
@@ -65,7 +65,11 @@ impl SampleLattice {
     /// `resolution` is the nominal tetrahedral sample spacing within each sampling plane.
     /// The lattice stores points on a finer skewed grid, with spacing
     /// `[resolution / 2, resolution * sqrt(2) / 2, resolution / sqrt(2)]`.
-    pub fn new(resolution: f64, extents: AABB<f64>, sampling_transform: Option<MatRef<'_, f64>>,) -> Self {
+    pub fn new(
+        resolution: f64,
+        extents: AABB<f64>,
+        sampling_transform: Option<MatRef<'_, f64>>,
+    ) -> Self {
         let sqrt2 = std::f64::consts::SQRT_2;
         let spacing = [
             resolution / 2.0,
@@ -86,28 +90,19 @@ impl SampleLattice {
             .copied()
             .fold(f64::INFINITY, f64::min);
 
-        let maximum_scale = singular_values
-            .iter()
-            .copied()
-            .fold(0.0, f64::max);
+        let maximum_scale = singular_values.iter().copied().fold(0.0, f64::max);
 
         let inverse_transform = transform.partial_piv_lu().inverse();
 
-        let sampling_spacing = Col::from_fn(3, |i| {
-            spacing[i] * minimum_scale
-        });
+        let sampling_spacing = Col::from_fn(3, |i| spacing[i] * minimum_scale);
 
-        let reciprocal_spacing = Col::from_fn(3, |i| {
-            sampling_spacing[i].recip()
-        });
+        let reciprocal_spacing = Col::from_fn(3, |i| sampling_spacing[i].recip());
 
         // Maps fine-grid displacements into world coordinates.
-        let sampling_basis =
-            sampling_spacing.as_ref().as_diagonal() * &inverse_transform;
+        let sampling_basis = sampling_spacing.as_ref().as_diagonal() * &inverse_transform;
 
         // Maps world displacements into fine-grid coordinates.
-        let inverse_sampling_basis =
-            &transform * reciprocal_spacing.as_ref().as_diagonal();
+        let inverse_sampling_basis = &transform * reciprocal_spacing.as_ref().as_diagonal();
 
         // Each row contains a world-box corner relative to the lattice origin.
         let corners = Mat::from_fn(8, 3, |corner, axis| {
@@ -140,8 +135,7 @@ impl SampleLattice {
         let basis_inv = basis.partial_piv_lu().inverse().transpose().to_owned();
 
         // Base the finite-difference step on the shortest physical scale.
-        let minimum_world_spacing =
-            spacing[0] * minimum_scale / maximum_scale;
+        let minimum_world_spacing = spacing[0] * minimum_scale / maximum_scale;
 
         let gradient_step = minimum_world_spacing * 1.0e-4;
 
@@ -159,10 +153,7 @@ impl SampleLattice {
 
     /// Converts a point from lattice space to world space.
     pub fn ijk_to_world(&self, ijk: [i64; 3]) -> [f64; 3] {
-        let offset = transform_vector(
-            ijk.map(|value| value as f64),
-            self.sampling_basis.as_ref(),
-        );
+        let offset = transform_vector(ijk.map(|value| value as f64), self.sampling_basis.as_ref());
 
         self.extents.min_corner.add(offset)
     }
@@ -212,9 +203,8 @@ impl SampleLattice {
     /// samples and finite-difference offsets.
     pub fn evaluation_extents(&self) -> Vec<f64> {
         let padding: [i64; 3] = array::from_fn(|axis| {
-            let owner_span = (U[axis] as i64).abs()
-                + (V[axis] as i64).abs()
-                + (W[axis] as i64).abs();
+            let owner_span =
+                (U[axis] as i64).abs() + (V[axis] as i64).abs() + (W[axis] as i64).abs();
 
             let neighbour_span = EDGE_DELTAS
                 .iter()
@@ -235,8 +225,8 @@ impl SampleLattice {
 
         // Add the lattice origin and include world seed-projection positions.
         for axis in 0..3 {
-            extents[axis] = (extents[axis] + self.extents.min_corner[axis])
-                .min(self.extents.min_corner[axis]);
+            extents[axis] =
+                (extents[axis] + self.extents.min_corner[axis]).min(self.extents.min_corner[axis]);
             extents[axis + 3] = (extents[axis + 3] + self.extents.min_corner[axis])
                 .max(self.extents.max_corner[axis]);
         }
@@ -267,13 +257,8 @@ impl SampleLattice {
 
 #[inline(always)]
 fn transform_vector(vector: [f64; 3], transform: MatRef<'_, f64>) -> [f64; 3] {
-    std::array::from_fn(|col| {
-        (0..3)
-            .map(|row| vector[row] * transform[(row, col)])
-            .sum()
-    })
+    std::array::from_fn(|col| (0..3).map(|row| vector[row] * transform[(row, col)]).sum())
 }
-
 
 /// Returns the eight corners of an axis-aligned box as rows.
 #[inline(always)]
@@ -297,8 +282,7 @@ pub fn get_evaluation_extents(
         max_corner: [extents[3], extents[4], extents[5]],
     };
 
-    SampleLattice::new(resolution, extents, sampling_transform)
-        .evaluation_extents()
+    SampleLattice::new(resolution, extents, sampling_transform).evaluation_extents()
 }
 
 #[inline(always)]

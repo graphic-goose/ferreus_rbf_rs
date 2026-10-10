@@ -295,11 +295,139 @@ class KernelParams:
         total_sill: Optional[float],
     ) -> None: ...
 
+class TargetGrid:
+    """Represents a regular grid of target points in one, two, or three dimensions.
+
+    Stores only the origin, spacing, and number of samples on each axis.
+    Target coordinates are calculated in C order, with the last axis varying fastest.
+    """
+
+    def __init__(self, origin: list[float], spacing: list[float], shape: list[int]) -> None:
+        """Constructs a regular target grid from axis origins, spacing, and sample counts.
+
+        Parameters
+        ----------
+        origin : list[float]
+            Coordinate of the first sample on each axis.
+        spacing : list[float]
+            Non-negative spacing on each axis. Zero spacing is allowed only for axes with one sample.
+        shape : list[int]
+            Positive number of samples on each axis.
+
+        Raises
+        ------
+        ValueError
+            If the arrays do not describe one to three axes, the coordinates or spacing
+            are invalid, or the total number of target points exceeds the supported index range.
+        OverflowError
+            If a sample count is negative or exceeds the supported index range.
+        """
+        ...
+
+    @staticmethod
+    def from_spacing(extents: list[float], spacing: list[float]) -> TargetGrid:
+        """Constructs a regular target grid from bounding extents and axis spacing.
+
+        Parameters
+        ----------
+        extents : list[float]
+            Bounding box `[xmin, ymin, ..., xmax, ymax, ...]` for one to three dimensions.
+        spacing : list[float]
+            Positive spacing on each axis.
+
+        Returns
+        -------
+        TargetGrid
+            A grid beginning at the lower bounds and containing all samples up to the upper bounds.
+            The given spacing is preserved, so the final sample may fall short of the upper bound.
+
+        Raises
+        ------
+        ValueError
+            If the bounds, spacing, or resulting sample counts are invalid.
+        """
+        ...
+
+    def dimensions(self) -> int:
+        """Gets the number of grid axes."""
+        ...
+
+    def shape(self) -> list[int]:
+        """Gets the number of samples on each grid axis."""
+        ...
+
+    def point_count(self) -> int:
+        """Calculates the total number of grid targets as the product of the axis sample counts."""
+        ...
+
+    def coordinate(self, target_index: int, axis: int) -> float:
+        """Calculates a single coordinate of a grid target for the given axis.
+
+        The target index uses C order, with the last axis varying fastest.
+
+        Raises
+        ------
+        IndexError
+            If the target index or axis is out of bounds.
+        OverflowError
+            If the target index or axis is negative or exceeds the supported index range.
+        """
+        ...
+
+    def write_target(self, target_index: int, output: npt.NDArray[np.float64]) -> None:
+        """Calculates the coordinates of a grid target and writes them to the given output array.
+
+        The target index uses C order, with the last axis varying fastest.
+        The output must be a writable one-dimensional float64 array.
+
+        Raises
+        ------
+        IndexError
+            If the target index is out of bounds.
+        ValueError
+            If the output length differs from the dimensionality.
+        OverflowError
+            If the target index is negative or exceeds the supported index range.
+        """
+        ...
+
+    def extents(self) -> list[float]:
+        """Gets the bounding extents of the sampled grid.
+
+        Returns `[xmin, ymin, ..., xmax, ymax, ...]` using the first and last samples on each axis,
+        before any tree padding or coordinate transforms.
+        """
+        ...
+
+    def points(self, start: int, count: int) -> npt.NDArray[np.float64]:
+        """Creates a matrix containing a contiguous range of grid target coordinates.
+
+        Parameters
+        ----------
+        start : int
+            Global index of the first target in C order.
+        count : int
+            Number of consecutive targets to include.
+
+        Returns
+        -------
+        npt.NDArray[np.float64]
+            A target point array of shape (count, D), where D is the dimensionality.
+
+        Raises
+        ------
+        IndexError
+            If the requested range extends beyond the grid targets.
+        OverflowError
+            If start or count is negative or exceeds the supported index range.
+        """
+        ...
+
 class FmmTree:
     """A Fast Multipole Method (FMM) tree that organises source points into a hierarchical spatial
     structure to accelerate kernel summation tasks.
 
-    The tree supports both adaptive and uniform refinement, with optional sparse leaf pruning.
+    The tree is adaptively and refined, with optional sparse leaf pruning.
     It efficiently precomputes all operators (M2M and M2L) required for far-field approximation.
 
     Parameters
@@ -310,26 +438,31 @@ class FmmTree:
         the dimensionality.
     interpolation_order : int
         Number of Chebyshev interpolation nodes per dimension.
-    kernel_params : FmmParams
+    kernel_params : KernelParams
         KernelParams that define the kernel function used for interaction computations.
-    adaptive_tree : bool
-        Whether the tree uses adaptive or uniform subdivision.
     sparse : bool
         If `True`, constructs a sparse tree that omits empty leaves.
     extents : Optional[npt.NDArray[np.float64]]
-        Optional bounding box `[xmin, xmax, ymin, ymax, ...]`; if `None`, computed from data.
+        Optional bounding box `[xmin, ymin, ..., xmax, ymax, ...]`; if `None`, computed from data.
     params : Optional[FmmParams]
         Optional parameters for tuning the FMM performance.
+    target_points : Optional[npt.NDArray[np.float64]]
+        Optional target locations used to guide adaptive refinement when `sparse`=False.
+    target_grid : Optional[TargetGrid]
+        Optional regular target grid used to guide adaptive refinement, without target coordinates.
+        Provide either target_points or target_grid.
     """    
     def __init__(
         self,
         source_points: npt.NDArray[np.float64],
         interpolation_order: int,
         kernel_params: KernelParams,
-        adaptive_tree: bool,
         sparse: bool,
-        extents: Optional[npt.NDArray[np.float64]],
-        params: Optional[FmmParams],
+        *,
+        extents: Optional[npt.NDArray[np.float64]] = None,
+        params: Optional[FmmParams] = None,
+        target_points: npt.NDArray[np.float64] | None = None,
+        target_grid: TargetGrid | None = None,
     ) -> None: ...
 
     def set_weights(
@@ -406,16 +539,10 @@ class FmmTree:
 
     def set_local_coefficients(
         self,
-        weights: npt.NDArray[np.float64],
     ) -> None: 
         """Performs a downward pass of the tree to set the local coefficients. Intended to be
-        used before calling [`evaluate_leaves`][ferreus_bbfmm.FmmTree.evaluate_leaves].
-
-        Parameters
-        ----------
-        weights : npt.NDArray[np.float64]
-            Numpy array of shape (N, K), where N is the number of source points and K is the number
-            of right-hand sides to evaluate, containing source point weights (values)
+        used after calling [`set_weights`][ferreus_bbfmm.FmmTree.set_weights] and before calling
+        [`evaluate_leaves`][ferreus_bbfmm.FmmTree.evaluate_leaves].
         """
         ...
 
@@ -476,6 +603,166 @@ class FmmTree:
             The gradient values are stored in batches of D columns, so the first D columns are for each dimension
             of the first column of values evaluated, the second D columns are for each dimension of the second column
             of values evaluated etc.                  
+        """
+        ...
+
+    def evaluate_grid(self, weights: npt.NDArray[np.float64], grid: TargetGrid) -> npt.NDArray[np.float64]:
+        """Performs a downward pass of the tree to set the local coefficients and
+        then performs a leaf evaluation pass to evaluate the values at the
+        grid target locations.
+
+        Call [`set_weights`][ferreus_bbfmm.FmmTree.set_weights] before evaluating, and repeat that step whenever the weights change.
+
+        Parameters
+        ----------
+        weights : npt.NDArray[np.float64]
+            Numpy array of shape (N, K), where N is the number of source points and K is the number of right-hand sides
+            to evaluate, containing source point weights (values). Must match the weights used to set the multipole coefficients.
+        grid : TargetGrid
+            Regular target grid with the same dimensionality as the tree.
+
+        Returns
+        -------
+        values : npt.NDArray[np.float64]
+            Array of evaluated values with shape `grid_shape` for a single right-hand side or
+            `grid_shape + (K,)` for multiple right-hand sides, where K is the number of
+            right-hand sides evaluated. The spatial axes follow the order of the grid axes,
+            with the last grid axis varying fastest (C order).
+
+        Raises
+        ------
+        ValueError
+            If the grid dimensionality differs from the tree or the grid is not completely covered by its leaf cells.
+            Sparse trees may omit cells containing grid targets.
+
+        Notes
+        -----
+        Target coordinates are generated as needed, without storing the complete coordinate matrix.
+        `grid_shape` is given by [`TargetGrid.shape`][ferreus_bbfmm.TargetGrid.shape].
+        """
+        ...
+
+    def evaluate_grid_with_gradients(self, weights: npt.NDArray[np.float64], grid: TargetGrid) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+        """Performs a downward pass of the tree to set the local coefficients and
+        then performs a leaf evaluation pass to evaluate the values and gradients at the
+        grid target locations.
+
+        Call [`set_weights`][ferreus_bbfmm.FmmTree.set_weights] before evaluating, and repeat that step whenever the weights change.
+
+        Parameters
+        ----------
+        weights : npt.NDArray[np.float64]
+            Numpy array of shape (N, K), where N is the number of source points and K is the number of right-hand sides
+            to evaluate, containing source point weights (values). Must match the weights used to set the multipole coefficients.
+        grid : TargetGrid
+            Regular target grid with the same dimensionality as the tree.
+
+        Returns
+        -------
+        values : npt.NDArray[np.float64]
+            Array of evaluated values with shape `grid_shape` for a single right-hand side or
+            `grid_shape + (K,)` for multiple right-hand sides, where K is the number of
+            right-hand sides evaluated. The spatial axes follow the order of the grid axes,
+            with the last grid axis varying fastest (C order).
+        gradients : npt.NDArray[np.float64]
+            Array of evaluated gradients with shape `grid_shape + (D,)` for a single right-hand
+            side or `grid_shape + (K, D)` for multiple right-hand sides, where D is the
+            dimensionality and K is the number of right-hand sides evaluated.
+            The final axis contains the gradient components for each dimension, and the
+            preceding axis selects the right-hand side when K is greater than one.
+
+        Raises
+        ------
+        ValueError
+            If the grid dimensionality differs from the tree or the grid is not completely covered by its leaf cells.
+            Sparse trees may omit cells containing grid targets.
+            Also raised if the kernel does not support gradient evaluation.
+
+        Notes
+        -----
+        Target coordinates are generated as needed, without storing the complete coordinate matrix.
+        `grid_shape` is given by [`TargetGrid.shape`][ferreus_bbfmm.TargetGrid.shape].
+        """
+        ...
+
+    def evaluate_grid_leaves(self, weights: npt.NDArray[np.float64], grid: TargetGrid) -> npt.NDArray[np.float64]:
+        """Performs a leaf evaluation pass to calculate the values at the grid target locations. Intended to be
+        used after [`set_local_coefficients`][ferreus_bbfmm.FmmTree.set_local_coefficients], for when repeated calls to this function are desired,
+        such as when using 'surface following' isosurface generation algorithms.
+
+        Call [`set_weights`][ferreus_bbfmm.FmmTree.set_weights] followed by [`set_local_coefficients`][ferreus_bbfmm.FmmTree.set_local_coefficients] before evaluating.
+        If the weights change, repeat both steps before calling this method again.
+
+        Parameters
+        ----------
+        weights : npt.NDArray[np.float64]
+            Numpy array of shape (N, K), where N is the number of source points and K is the number of right-hand sides
+            to evaluate, containing source point weights (values). Must match the weights used to set the multipole coefficients.
+        grid : TargetGrid
+            Regular target grid with the same dimensionality as the tree.
+
+        Returns
+        -------
+        values : npt.NDArray[np.float64]
+            Array of evaluated values with shape `grid_shape` for a single right-hand side or
+            `grid_shape + (K,)` for multiple right-hand sides, where K is the number of
+            right-hand sides evaluated. The spatial axes follow the order of the grid axes,
+            with the last grid axis varying fastest (C order).
+
+        Raises
+        ------
+        ValueError
+            If the grid dimensionality differs from the tree or the grid is not completely covered by its leaf cells.
+            Sparse trees may omit cells containing grid targets.
+
+        Notes
+        -----
+        Target coordinates are generated as needed, without storing the complete coordinate matrix.
+        `grid_shape` is given by [`TargetGrid.shape`][ferreus_bbfmm.TargetGrid.shape].
+        """
+        ...
+
+    def evaluate_grid_leaves_with_gradients(self, weights: npt.NDArray[np.float64], grid: TargetGrid) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+        """Performs a leaf evaluation pass to calculate the values and gradients at the grid target locations. Intended to be
+        used after [`set_local_coefficients`][ferreus_bbfmm.FmmTree.set_local_coefficients], for when repeated calls to this function are desired,
+        such as when using 'surface following' isosurface generation algorithms.
+
+        Call [`set_weights`][ferreus_bbfmm.FmmTree.set_weights] followed by [`set_local_coefficients`][ferreus_bbfmm.FmmTree.set_local_coefficients] before evaluating.
+        If the weights change, repeat both steps before calling this method again.
+
+        Parameters
+        ----------
+        weights : npt.NDArray[np.float64]
+            Numpy array of shape (N, K), where N is the number of source points and K is the number of right-hand sides
+            to evaluate, containing source point weights (values). Must match the weights used to set the multipole coefficients.
+        grid : TargetGrid
+            Regular target grid with the same dimensionality as the tree.
+
+        Returns
+        -------
+        values : npt.NDArray[np.float64]
+            Array of evaluated values with shape `grid_shape` for a single right-hand side or
+            `grid_shape + (K,)` for multiple right-hand sides, where K is the number of
+            right-hand sides evaluated. The spatial axes follow the order of the grid axes,
+            with the last grid axis varying fastest (C order).
+        gradients : npt.NDArray[np.float64]
+            Array of evaluated gradients with shape `grid_shape + (D,)` for a single right-hand
+            side or `grid_shape + (K, D)` for multiple right-hand sides, where D is the
+            dimensionality and K is the number of right-hand sides evaluated.
+            The final axis contains the gradient components for each dimension, and the
+            preceding axis selects the right-hand side when K is greater than one.
+
+        Raises
+        ------
+        ValueError
+            If the grid dimensionality differs from the tree or the grid is not completely covered by its leaf cells.
+            Sparse trees may omit cells containing grid targets.
+            Also raised if the kernel does not support gradient evaluation.
+
+        Notes
+        -----
+        Target coordinates are generated as needed, without storing the complete coordinate matrix.
+        `grid_shape` is given by [`TargetGrid.shape`][ferreus_bbfmm.TargetGrid.shape].
         """
         ...
 

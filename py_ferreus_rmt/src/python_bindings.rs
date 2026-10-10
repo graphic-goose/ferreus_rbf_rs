@@ -367,7 +367,9 @@ pub fn build_isosurface(
         seed_points_mat,
         extents_slice,
         resolution,
-        sampling_transform.as_ref().map(|transform| transform.as_ref()),
+        sampling_transform
+            .as_ref()
+            .map(|transform| transform.as_ref()),
         isovalue,
         &mut py_surface_fn,
         gradient_fn_ref,
@@ -502,7 +504,9 @@ pub fn build_isosurfaces<'py>(
         seed_points_mat,
         extents_slice,
         resolution,
-        sampling_transform.as_ref().map(|transform| transform.as_ref()),
+        sampling_transform
+            .as_ref()
+            .map(|transform| transform.as_ref()),
         isovalues,
         &mut py_surface_fn,
         gradient_fn_ref,
@@ -532,9 +536,7 @@ fn read_sampling_transform(
                 ));
             }
 
-            if !(0..3).all(|row| {
-                (0..3).all(|col| transform[(row, col)].is_finite())
-            }) {
+            if !(0..3).all(|row| (0..3).all(|col| transform[(row, col)].is_finite())) {
                 return Err(PyValueError::new_err(
                     "sampling_transform must contain finite values",
                 ));
@@ -542,19 +544,14 @@ fn read_sampling_transform(
 
             let singular_values = transform
                 .singular_values()
-                .map_err(|_| PyValueError::new_err(
-                    "sampling_transform SVD failed",
-                ))?;
+                .map_err(|_| PyValueError::new_err("sampling_transform SVD failed"))?;
 
             let minimum_scale = singular_values
                 .iter()
                 .copied()
                 .fold(f64::INFINITY, f64::min);
 
-            let maximum_scale = singular_values
-                .iter()
-                .copied()
-                .fold(0.0, f64::max);
+            let maximum_scale = singular_values.iter().copied().fold(0.0, f64::max);
 
             if !minimum_scale.is_finite()
                 || !maximum_scale.is_finite()
@@ -582,9 +579,7 @@ pub fn get_evaluation_extents(
     let extents = extents.as_slice()?;
 
     if extents.len() != 6 {
-        return Err(PyValueError::new_err(
-            "extents must have shape (6,)",
-        ));
+        return Err(PyValueError::new_err("extents must have shape (6,)"));
     }
 
     if !resolution.is_finite() || resolution <= 0.0 {
@@ -609,6 +604,8 @@ pub fn get_evaluation_extents(
     Ok(ferreus_rmt::get_evaluation_extents(
         extents,
         resolution,
-        sampling_transform.as_ref().map(|transform| transform.as_ref()),
+        sampling_transform
+            .as_ref()
+            .map(|transform| transform.as_ref()),
     ))
 }

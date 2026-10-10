@@ -125,19 +125,14 @@ pub mod arc {
     use super::*;
     use std::sync::Arc;
 
-    pub fn serialize<S>(
-        mat: &Arc<Mat<f64>>,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error>
+    pub fn serialize<S>(mat: &Arc<Mat<f64>>, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
         super::serialize(mat.as_ref(), serializer)
     }
 
-    pub fn deserialize<'de, D>(
-        deserializer: D,
-    ) -> Result<Arc<Mat<f64>>, D::Error>
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Arc<Mat<f64>>, D::Error>
     where
         D: Deserializer<'de>,
     {

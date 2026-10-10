@@ -15,6 +15,7 @@ mod python_bindings;
 #[pymodule]
 pub fn ferreus_bbfmm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<python_bindings::FmmTree>()?;
+    m.add_class::<python_bindings::TargetGrid>()?;
     m.add_class::<python_bindings::FmmKernelType>()?;
     m.add_class::<python_bindings::FmmParams>()?;
     m.add_class::<python_bindings::KernelParams>()?;

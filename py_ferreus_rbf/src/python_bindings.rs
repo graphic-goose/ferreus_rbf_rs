@@ -423,7 +423,9 @@ impl From<RBFKernelType> for interpolant_config::RBFKernelType {
             RBFKernelType::Exponential => interpolant_config::RBFKernelType::Exponential,
             RBFKernelType::Gaussian => interpolant_config::RBFKernelType::Gaussian,
             RBFKernelType::Cubic2 => interpolant_config::RBFKernelType::Cubic2,
-            RBFKernelType::InverseMultiquadratic => interpolant_config::RBFKernelType::InverseMultiquadratic,
+            RBFKernelType::InverseMultiquadratic => {
+                interpolant_config::RBFKernelType::InverseMultiquadratic
+            }
         }
     }
 }
@@ -842,13 +844,93 @@ impl RBFInterpolator {
         targets: PyReadonlyArray2<'_, f64>,
     ) -> (Py<PyAny>, Bound<'py, PyArray2<f64>>) {
         let target_mat = targets.into_faer();
-        let (vals, grads) = py.detach(|| self.inner.evaluate_with_gradients(target_mat));
+        let (vals, grads) = py.detach(|| self.inner.evaluate_targets_with_gradients(target_mat));
 
         // Convert after we’ve got the GIL again
         (
             mat_to_numpy_scalar_or_matrix(&vals, py),
             mat_to_numpy(&grads, py),
         )
+    }
+
+    /// Build reusable coefficients with target-aware refinement for a grid.
+    fn build_grid_evaluator(
+        &mut self,
+        py: Python<'_>,
+        extents: Vec<f64>,
+        spacing: Vec<f64>,
+    ) -> PyResult<()> {
+        py.detach(|| self.inner.build_grid_evaluator(&extents, &spacing))
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
+    }
+
+    /// Evaluate a dense world grid; outputs have spatial shape and optional RHS axis.
+    fn evaluate_grid(
+        &self,
+        py: Python<'_>,
+        extents: Vec<f64>,
+        spacing: Vec<f64>,
+    ) -> PyResult<Py<PyAny>> {
+        let definition = ferreus_rbf::TargetGrid::from_spacing(&extents, &spacing)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        let values = py
+            .detach(|| self.inner.evaluate_grid(&extents, &spacing))
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        grid_values_to_numpy(py, &values, definition.shape())
+    }
+
+    /// Evaluate a dense world grid; outputs have spatial shape and optional RHS axis.
+    fn evaluate_grid_with_gradients(
+        &self,
+        py: Python<'_>,
+        extents: Vec<f64>,
+        spacing: Vec<f64>,
+    ) -> PyResult<(Py<PyAny>, Py<PyAny>)> {
+        let definition = ferreus_rbf::TargetGrid::from_spacing(&extents, &spacing)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        let (values, gradients) = py
+            .detach(|| self.inner.evaluate_grid_with_gradients(&extents, &spacing))
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        Ok((
+            grid_values_to_numpy(py, &values, definition.shape())?,
+            grid_gradients_to_numpy(py, &gradients, definition.shape(), values.ncols())?,
+        ))
+    }
+
+    /// Evaluate a dense world grid; outputs have spatial shape and optional RHS axis.
+    fn evaluate_grid_targets(
+        &mut self,
+        py: Python<'_>,
+        extents: Vec<f64>,
+        spacing: Vec<f64>,
+    ) -> PyResult<Py<PyAny>> {
+        let definition = ferreus_rbf::TargetGrid::from_spacing(&extents, &spacing)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        let values = py
+            .detach(|| self.inner.evaluate_grid_targets(&extents, &spacing))
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        grid_values_to_numpy(py, &values, definition.shape())
+    }
+
+    /// Evaluate a dense world grid; outputs have spatial shape and optional RHS axis.
+    fn evaluate_grid_targets_with_gradients(
+        &mut self,
+        py: Python<'_>,
+        extents: Vec<f64>,
+        spacing: Vec<f64>,
+    ) -> PyResult<(Py<PyAny>, Py<PyAny>)> {
+        let definition = ferreus_rbf::TargetGrid::from_spacing(&extents, &spacing)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        let (values, gradients) = py
+            .detach(|| {
+                self.inner
+                    .evaluate_grid_targets_with_gradients(&extents, &spacing)
+            })
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        Ok((
+            grid_values_to_numpy(py, &values, definition.shape())?,
+            grid_gradients_to_numpy(py, &gradients, definition.shape(), values.ncols())?,
+        ))
     }
 
     #[pyo3(signature = (extents, resolution, isovalue, boundary_closure=None))]
@@ -1123,7 +1205,9 @@ pub fn build_isosurface<'py>(
         seed_points_mat,
         extents_slice,
         resolution,
-        sampling_transform.as_ref().map(|transform| transform.as_ref()),
+        sampling_transform
+            .as_ref()
+            .map(|transform| transform.as_ref()),
         isovalue,
         &mut py_surface_fn,
         gradient_fn_ref,
@@ -1259,7 +1343,9 @@ pub fn build_isosurfaces<'py>(
         seed_points_mat,
         extents_slice,
         resolution,
-        sampling_transform.as_ref().map(|transform| transform.as_ref()),
+        sampling_transform
+            .as_ref()
+            .map(|transform| transform.as_ref()),
         isovalues,
         &mut py_surface_fn,
         gradient_fn_ref,
@@ -1368,9 +1454,7 @@ fn read_sampling_transform(
                 ));
             }
 
-            if !(0..3).all(|row| {
-                (0..3).all(|col| transform[(row, col)].is_finite())
-            }) {
+            if !(0..3).all(|row| (0..3).all(|col| transform[(row, col)].is_finite())) {
                 return Err(PyValueError::new_err(
                     "sampling_transform must contain finite values",
                 ));
@@ -1378,19 +1462,14 @@ fn read_sampling_transform(
 
             let singular_values = transform
                 .singular_values()
-                .map_err(|_| PyValueError::new_err(
-                    "sampling_transform SVD failed",
-                ))?;
+                .map_err(|_| PyValueError::new_err("sampling_transform SVD failed"))?;
 
             let minimum_scale = singular_values
                 .iter()
                 .copied()
                 .fold(f64::INFINITY, f64::min);
 
-            let maximum_scale = singular_values
-                .iter()
-                .copied()
-                .fold(0.0, f64::max);
+            let maximum_scale = singular_values.iter().copied().fold(0.0, f64::max);
 
             if !minimum_scale.is_finite()
                 || !maximum_scale.is_finite()
@@ -1418,9 +1497,7 @@ pub fn get_evaluation_extents(
     let extents = extents.as_slice()?;
 
     if extents.len() != 6 {
-        return Err(PyValueError::new_err(
-            "extents must have shape (6,)",
-        ));
+        return Err(PyValueError::new_err("extents must have shape (6,)"));
     }
 
     if !resolution.is_finite() || resolution <= 0.0 {
@@ -1445,6 +1522,32 @@ pub fn get_evaluation_extents(
     Ok(ferreus_rbf::isosurfacing::get_evaluation_extents(
         extents,
         resolution,
-        sampling_transform.as_ref().map(|transform| transform.as_ref()),
+        sampling_transform
+            .as_ref()
+            .map(|transform| transform.as_ref()),
     ))
+}
+/// Grid outputs use C order; a RHS axis is appended only for multiple fields.
+fn grid_values_to_numpy(py: Python<'_>, values: &Mat<f64>, shape: &[usize]) -> PyResult<Py<PyAny>> {
+    let mut output_shape = shape.to_vec();
+    if values.ncols() > 1 {
+        output_shape.push(values.ncols());
+    }
+    mat_to_numpy_scalar_or_matrix(values, py).call_method1(py, "reshape", (output_shape,))
+}
+
+fn grid_gradients_to_numpy(
+    py: Python<'_>,
+    gradients: &Mat<f64>,
+    shape: &[usize],
+    nrhs: usize,
+) -> PyResult<Py<PyAny>> {
+    let mut output_shape = shape.to_vec();
+    if nrhs > 1 {
+        output_shape.push(nrhs);
+    }
+    output_shape.push(shape.len());
+    mat_to_numpy(gradients, py)
+        .unbind()
+        .call_method1(py, "reshape", (output_shape,))
 }

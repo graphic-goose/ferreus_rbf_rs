@@ -13,9 +13,10 @@ the kernel is smooth (i.e. non-oscillatory).
 # Features
 - 1D (binary tree), 2D (quadtree) and 3D (octree)
 - Optimised low-rank M2L interactions that leverage symmetries and compression
-- Both adaptive and non-adaptive tree structures
+- Adaptive tree structure
 - Multiple right-hand sides
 - Optional simultaneous evaluation of kernel values and gradients
+- Regular target grids stored as axis metadata, with target-aware tree refinement
 
 ---
 ## Install
@@ -33,6 +34,22 @@ import ferreus_bbfmm
 
 See the [docs](https://graphic-goose.github.io/ferreus_rbf_rs/ferreus_bbfmm/) and `examples/` directories in this package for more detailed
 usage and API documentation.
+
+A regular grid can be reused to guide tree refinement and evaluate values or gradients:
+
+```python
+from ferreus_bbfmm import TargetGrid
+
+grid = TargetGrid.from_spacing(
+    [-1.0, -1.0, -1.0, 1.0, 1.0, 1.0],
+    [0.1, 0.1, 0.1],
+)
+# When constructing FmmTree, pass target_grid=grid and sparse=False.
+# After tree.set_weights(weights):
+# values, gradients = tree.evaluate_grid_with_gradients(weights, grid)
+```
+
+See `examples/grid_evaluator.py` for a complete example.
 
 --- 
 ## Attribution and licensing

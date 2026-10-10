@@ -119,7 +119,8 @@ mod worker_pool;
 /// Functions related to isosurfacing algorithms
 pub mod isosurfacing {
     pub use ferreus_rmt::{
-        BoundaryClosure, ClusterMethod, Mesh, build_isosurface, build_isosurfaces, get_evaluation_extents,
+        BoundaryClosure, ClusterMethod, Mesh, build_isosurface, build_isosurfaces,
+        get_evaluation_extents,
     };
 }
 
@@ -128,6 +129,7 @@ pub use {
         create_evaluation_grid, csv_to_point_arrays, generate_random_points, pad_and_snap_extents,
         point_arrays_to_csv,
     },
+    ferreus_bbfmm::TargetGrid,
     global_trend::GlobalTrend,
     rbf::{Coefficients, ModelIOError, RBFInterpolator, RBFInterpolatorBuilder},
     rbf_test_functions::RBFTestFunctions,

@@ -22,7 +22,7 @@
 //! # Features:
 //! - 1D (binary tree), 2D (quadtree) and 3D (octree)
 //! - Optimised low-rank M2L interactions that leverage symmetries and compression
-//! - Both adaptive and non-adaptive tree structures
+//! - Adaptive tree structure
 //! - Multiple right-hand sides
 //! - Optional simultaneous evaluation of kernel values and gradients
 //!
@@ -66,9 +66,6 @@
 //! // A higher interpolation order is more accurate, but takes longer to compute
 //! let interpolation_order = 7;
 //!
-//! // Create an adaptive tree
-//! let adaptive_tree = true;
-//!
 //! // No need to store empty leaves for fast matrix-vector product
 //! let sparse_tree = true;
 //!
@@ -77,7 +74,6 @@
 //!     source_points.clone(),
 //!     interpolation_order,
 //!     kernel,
-//!     adaptive_tree,
 //!     sparse_tree,
 //!     None,
 //!     None,
@@ -164,9 +160,6 @@
 //! // A higher interpolation order is more accurate, but takes longer to compute
 //! let interpolation_order = 7;
 //!
-//! // Create an adaptive tree
-//! let adaptive_tree = true;
-//!
 //! // No need to store empty leaves for fast matrix-vector product
 //! let sparse_tree = true;
 //!
@@ -175,7 +168,6 @@
 //!     source_points.clone(),
 //!     interpolation_order,
 //!     kernel,
-//!     adaptive_tree,
 //!     sparse_tree,
 //!     None,
 //!     None,
@@ -231,9 +223,6 @@
 //!
 //! let interpolation_order = 7;
 //!
-//! // Creating an adaptive tree for the evaluator uses less memory
-//! let adaptive_tree = true;
-//!
 //! // Store empty leaves for general RBF evaluation
 //! let sparse_tree = false;
 //!
@@ -253,7 +242,6 @@
 //!     source_points,
 //!     interpolation_order,
 //!     kernel,
-//!     adaptive_tree,
 //!     sparse_tree,
 //!     Some(extents),
 //!     Some(params),
@@ -267,7 +255,7 @@
 //! // is used, the evaluator may be called many times. In this case it's more efficient to
 //! // perform a single downward pass to set all the local coefficients, then call the evaluator
 //! // on the relevant leaves for each evaluation
-//! tree.set_local_coefficients(weights.as_ref());
+//! tree.set_local_coefficients();
 //!
 //! // Create some arbritrary target points
 //! let num_target_points = 100;
@@ -304,14 +292,17 @@
 mod aca;
 mod bbfmm;
 mod chebyshev;
+mod evaluation_targets;
 mod linear_tree;
 mod morton;
 mod morton_constants;
+mod target_refinement;
 mod traits;
 mod utils;
 
 #[doc(inline)]
 pub use {
     bbfmm::{FmmError, FmmParams, FmmTree, M2LCompressionType},
+    evaluation_targets::{EvaluationTargets, TargetGrid},
     traits::KernelFunction,
 };

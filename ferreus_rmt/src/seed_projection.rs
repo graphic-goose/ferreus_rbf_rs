@@ -15,7 +15,7 @@
 //! gradient, clamps them to the extraction lattice, and returns the unique lattice cells that
 //! should seed wavefront expansion.
 
-use std::{collections::HashSet, array};
+use std::{array, collections::HashSet};
 
 use faer::{Mat, MatRef};
 
@@ -26,7 +26,7 @@ use crate::lattice::SampleLattice;
 /// The input matrix must be `N x 3`. Seeds are first clamped to the lattice AABB and deduplicated
 /// by their initial lattice cell. The remaining representatives are then iteratively projected
 /// toward `f(x) = isovalue` using values and gradients supplied by `gradient_fn`.
-/// 
+///
 /// During projection, active seeds at identical world positions are merged to avoid repeated
 /// evaluations. Only the retained representatives contribute to the returned seed cells.
 pub(crate) fn get_unique_seed_point_ijks(
@@ -101,7 +101,7 @@ pub(crate) fn get_unique_seed_point_ijks(
                 duplicate_points.insert(i);
                 false
             }
-        });        
+        });
         active_points.clear();
         active_points.reserve(active.len() * 3);
         for &i in &active {

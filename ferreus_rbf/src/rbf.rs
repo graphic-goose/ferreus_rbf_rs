@@ -15,14 +15,13 @@ use crate::{
     global_trend::{GlobalTrend, GlobalTrendTransform},
     interpolant_config::InterpolantSettings,
     isosurfacing::{self, Mesh},
-    iterative_solvers,
-    polynomials,
+    iterative_solvers, polynomials,
     preconditioning::{domain_decomposition::DDMTree, schwarz},
     progress::{ProgressMsg, ProgressSink, ProgressSinkExt},
 };
 
 use faer::{Mat, MatRef, Row, concat, mat::AsMatRef};
-use ferreus_bbfmm::FmmError;
+use ferreus_bbfmm::{EvaluationTargets, FmmError, TargetGrid};
 use ferreus_rbf_utils::{self, FmmTree, KernelParams};
 use ferreus_rmt::{BoundaryClosure, ClusterMethod};
 use roots;
@@ -163,11 +162,15 @@ fn panic_on_fmm_error<T>(err: FmmError) -> T {
         FmmError::KernelDoesNotSupportGradients => {
             panic!("gradient evaluation requested but kernel does not support gradients")
         }
+        FmmError::InvalidTargets(reason) => {
+            panic!("invalid evaluation targets: {reason}")
+        }
     }
 }
 
 /// Enum defining whether the FMM should do a full evaluation (downward pass + leaf evaluation)
 /// or a leaf only evaluation.
+#[derive(Clone, Copy)]
 enum FmmEvaluatorMode {
     Full,
     Leaves,
@@ -187,7 +190,7 @@ enum Evaluator {
 /// Convenience helper struct used in the _evaluate function.
 struct EvaluatorParams<'a> {
     evaluator: &'a mut Evaluator,
-    target_points: MatRef<'a, f64>,
+    target_points: EvaluationTargets<'a>,
     coefficients: &'a Coefficients,
     interpolant_settings: &'a InterpolantSettings,
     translation_factor: &'a [f64],
@@ -306,6 +309,10 @@ pub struct RBFInterpolator {
     #[serde(skip, default)]
     evaluator: Option<Evaluator>,
 
+    /// Requested evaluation bounds before transforms or FMM root padding.
+    #[serde(skip, default)]
+    evaluation_extents: Option<Vec<f64>>,
+
     /// Optional global trend transform (anisotropy / rotation).
     global_trend: Option<GlobalTrendTransform>,
 
@@ -395,6 +402,7 @@ impl RBFInterpolator {
             scale_factor: Vec::default(),
             params: params,
             evaluator: None,
+            evaluation_extents: None,
             global_trend: global_trend_transform,
             progress_callback: progress_callback,
         };
@@ -427,9 +435,7 @@ impl RBFInterpolator {
 
     fn setup_and_solve(&mut self) {
         if self.points.nrows() >= self.params.naive_solve_threshold {
-            return crate::worker_pool::install(|| {
-                self.setup_and_solve_impl()
-            });
+            return crate::worker_pool::install(|| self.setup_and_solve_impl());
         }
 
         self.setup_and_solve_impl();
@@ -458,7 +464,8 @@ impl RBFInterpolator {
                 &self.global_trend,
             );
 
-            let domain_coefficients = naive_domain.solve(&self.point_values.as_ref(), faer::get_global_parallelism());
+            let domain_coefficients =
+                naive_domain.solve(&self.point_values.as_ref(), faer::get_global_parallelism());
 
             let mut global_point_coefficients = Mat::<f64>::zeros(num_points, num_val_cols);
 
@@ -477,14 +484,12 @@ impl RBFInterpolator {
                 domain_coefficients.poly_coefficients,
             );
         } else {
-            let adaptive_tree = true;
             let sparse_tree = true;
 
             let fmm_tree = FmmTree::new(
                 self.points.clone(),
                 self.params.fmm_params.interpolation_order.clone(),
                 (*self.interpolant_settings).into(),
-                adaptive_tree,
                 sparse_tree,
                 None,
                 Some(self.params.fmm_params.into()),
@@ -621,7 +626,7 @@ impl RBFInterpolator {
     ///   configuration during evaluation).
     /// - `target_extents`: Optional target domain extents to use for building
     ///   the evaluator. If provided, the evaluator will be built with the union
-    ///   of source point extents and target extents. Format: 
+    ///   of source point extents and target extents. Format:
     ///   `[x_min, y_min, z_min, x_max, y_max, z_max]`.
     /// ```
     pub fn from_coefficients(
@@ -645,9 +650,8 @@ impl RBFInterpolator {
             ks
         });
 
-        let params = params.unwrap_or_else(|| {
-            Params::builder(interpolant_settings.kernel_type).build()
-        });
+        let params =
+            params.unwrap_or_else(|| Params::builder(interpolant_settings.kernel_type).build());
 
         // Compute scaling factors for polynomial evaluation if needed
         let (translation_factor, scale_factor) = if interpolant_settings.basis_size != 0 {
@@ -665,13 +669,15 @@ impl RBFInterpolator {
             scale_factor,
             params,
             evaluator: None,
+            evaluation_extents: None,
             global_trend: None,
             progress_callback: None,
         };
 
         // If target extents are provided, build evaluator with union of source and target extents
         if let Some(target_ext) = target_extents {
-            let source_extents = ferreus_rbf_utils::get_pointarray_extents(interpolator.points.as_mat_ref());
+            let source_extents =
+                ferreus_rbf_utils::get_pointarray_extents(interpolator.points.as_mat_ref());
             let combined_extents = union_extents(&source_extents, &target_ext);
             interpolator.build_evaluator(Some(combined_extents));
         }
@@ -686,10 +692,14 @@ impl RBFInterpolator {
     /// - Applies `global_trend` to `points` and (if provided) to the `extents` via
     ///   corner transformation before building the tree.
     /// - If `extents` is `None`, derives them from the (possibly transformed) points.
-    /// - `adaptive`: enable adaptive evaluation passes in the backend.
     /// - `sparse`: enable sparse/leaf-only evaluation strategies (used when evaluating
     ///   at the source points).
-    fn _setup_fmmtree(&self, adaptive: bool, sparse: bool, extents: Option<Vec<f64>>) -> FmmTree {
+    fn _setup_fmmtree(
+        &self,
+        sparse: bool,
+        extents: Option<Vec<f64>>,
+        target_points: Option<EvaluationTargets<'_>>,
+    ) -> FmmTree {
         let mut points = self.points.clone();
 
         let mut evaluator_extents = extents.clone();
@@ -712,32 +722,49 @@ impl RBFInterpolator {
         }
 
         if evaluator_extents.is_none() {
-            evaluator_extents = Some(ferreus_rbf_utils::get_pointarray_extents(points.as_mat_ref()));
+            evaluator_extents = Some(ferreus_rbf_utils::get_pointarray_extents(
+                points.as_mat_ref(),
+            ));
         }
 
-        let tree = FmmTree::new(
+        let transformed_targets = match (target_points, &self.global_trend) {
+            (Some(EvaluationTargets::Points(points)), Some(gt)) => {
+                Some(gt.transform_points(points))
+            }
+            _ => None,
+        };
+        let targets = if let Some(points) = transformed_targets.as_ref() {
+            Some(EvaluationTargets::Points(points.as_ref()))
+        } else if self.global_trend.is_some() {
+            // A transformed world grid is not axis aligned in tree coordinates.
+            None
+        } else {
+            target_points
+        };
+
+        let tree = FmmTree::new_with_targets(
             points,
             self.params.fmm_params.interpolation_order.clone(),
             (*self.interpolant_settings).into(),
-            adaptive,
             sparse,
             evaluator_extents,
             Some(self.params.fmm_params.into()),
+            targets,
         );
 
         tree
     }
 
-    /// Internal: build and configure an evaluator. 
-    /// 
+    /// Internal: build and configure an evaluator.
+    ///
     /// If the number of source points is less than the [`Params::direct_eval_threshold`] paramameter then
     /// a direct evaluator will be used, otherwise an FMM evaluator will be used.
     fn _setup_evaluator(
         &self,
-        adaptive: bool,
         sparse: bool,
         extents: Option<Vec<f64>>,
         mode: FmmEvaluatorMode,
+        target_points: Option<EvaluationTargets<'_>>,
     ) -> Evaluator {
         if self.points.nrows() < self.params.direct_eval_threshold {
             let source_points = match &self.global_trend {
@@ -750,11 +777,11 @@ impl RBFInterpolator {
                 batch_size: self.params.direct_eval_batch_size,
             }
         } else {
-            let mut tree = self._setup_fmmtree(adaptive, sparse, extents);
+            let mut tree = self._setup_fmmtree(sparse, extents, target_points);
             let weights = self.coefficients.point_coefficients.as_mat_ref();
             tree.set_weights(weights);
             if matches!(mode, FmmEvaluatorMode::Leaves) {
-                tree.set_local_coefficients(weights);
+                tree.set_local_coefficients();
             }
             Evaluator::Fmm(Box::new(tree))
         }
@@ -762,18 +789,16 @@ impl RBFInterpolator {
 
     fn _get_evaluator_union_extents(
         &self,
-        target_points: Option<MatRef<f64>>,
+        target_points: Option<EvaluationTargets<'_>>,
         target_extents: Option<&Vec<f64>>,
     ) -> Vec<f64> {
         let source_extents = ferreus_rbf_utils::get_pointarray_extents(self.points.as_mat_ref());
-        let target_extents = match target_points.is_some() {
-            true => Some(ferreus_rbf_utils::get_pointarray_extents(
-                target_points.unwrap(),
-            )),
-            false => match target_extents.is_some() {
-                true => Some(target_extents.unwrap().to_vec()),
-                false => None,
-            },
+        let target_extents = match target_points {
+            Some(EvaluationTargets::Points(points)) => {
+                Some(ferreus_rbf_utils::get_pointarray_extents(points))
+            }
+            Some(EvaluationTargets::Grid(grid)) => Some(grid.extents()),
+            None => target_extents.cloned(),
         };
 
         let combined_extents = match target_extents.is_some() {
@@ -809,7 +834,7 @@ impl RBFInterpolator {
     /// let values = rbfi.evaluate(targets.as_ref());
     /// ```
     pub fn evaluate(&self, target_points: MatRef<f64>) -> Mat<f64> {
-        let adaptive = true;
+        let target_points = EvaluationTargets::Points(target_points);
         let sparse = false;
 
         let extents = if self.points.nrows() < self.params.direct_eval_threshold {
@@ -819,11 +844,11 @@ impl RBFInterpolator {
         };
 
         let mut evaluator =
-            self._setup_evaluator(adaptive, sparse, extents, FmmEvaluatorMode::Full);
+            self._setup_evaluator(sparse, extents, FmmEvaluatorMode::Full, Some(target_points));
 
         let evaluator_params = EvaluatorParams {
             evaluator: &mut evaluator,
-            target_points: target_points.as_ref(),
+            target_points: target_points,
             coefficients: &self.coefficients,
             interpolant_settings: &self.interpolant_settings,
             translation_factor: &self.translation_factor,
@@ -865,7 +890,7 @@ impl RBFInterpolator {
     /// let (values, gradients) = rbfi.evaluate_with_gradients(targets.as_ref());
     /// ```
     pub fn evaluate_with_gradients(&self, target_points: MatRef<f64>) -> (Mat<f64>, Mat<f64>) {
-        let adaptive = true;
+        let target_points = EvaluationTargets::Points(target_points);
         let sparse = false;
 
         let extents = if self.points.nrows() < self.params.direct_eval_threshold {
@@ -875,11 +900,11 @@ impl RBFInterpolator {
         };
 
         let mut evaluator =
-            self._setup_evaluator(adaptive, sparse, extents, FmmEvaluatorMode::Full);
+            self._setup_evaluator(sparse, extents, FmmEvaluatorMode::Full, Some(target_points));
 
         let evaluator_params = EvaluatorParams {
             evaluator: &mut evaluator,
-            target_points: target_points.as_ref(),
+            target_points,
             coefficients: &self.coefficients,
             interpolant_settings: &self.interpolant_settings,
             translation_factor: &self.translation_factor,
@@ -920,14 +945,13 @@ impl RBFInterpolator {
     /// let fitted = rbfi.evaluate_at_source(true);
     /// ```
     pub fn evaluate_at_source(&self, add_nugget: bool) -> Mat<f64> {
-        let adaptive = true;
         let sparse = true;
 
-        let mut evaluator = self._setup_evaluator(adaptive, sparse, None, FmmEvaluatorMode::Full);
+        let mut evaluator = self._setup_evaluator(sparse, None, FmmEvaluatorMode::Full, None);
 
         let evaluator_params = EvaluatorParams {
             evaluator: &mut evaluator,
-            target_points: self.points.as_mat_ref(),
+            target_points: EvaluationTargets::Points(self.points.as_mat_ref()),
             coefficients: &self.coefficients,
             interpolant_settings: &self.interpolant_settings,
             translation_factor: &self.translation_factor,
@@ -970,8 +994,352 @@ impl RBFInterpolator {
     /// rbfi.build_evaluator(None);
     /// ```
     pub fn build_evaluator(&mut self, extents: Option<Vec<f64>>) {
+        let requested = extents
+            .unwrap_or_else(|| ferreus_rbf_utils::get_pointarray_extents(self.points.as_mat_ref()));
+        let bounds = self._get_evaluator_union_extents(None, Some(&requested));
         self.evaluator =
-            Some(self._setup_evaluator(true, false, extents, FmmEvaluatorMode::Leaves));
+            Some(self._setup_evaluator(false, Some(bounds), FmmEvaluatorMode::Leaves, None));
+        self.evaluation_extents = Some(requested);
+    }
+
+    /// Build and store a direct or FMM evaluator for **repeated grid evaluations**.
+    ///
+    /// Use this when you’ll call [`RBFInterpolator::evaluate_grid_targets`] or
+    /// [`RBFInterpolator::evaluate_grid_targets_with_gradients`] many times.
+    /// The evaluator is constructed once and saved inside the interpolator. For FMM,
+    /// local coefficients are prepared for reuse. When no `global_trend` is present,
+    /// the grid also guides FMM evaluator tree refinement.
+    /// Below `direct_eval_threshold`, direct evaluation accepts targets anywhere;
+    /// the extent restrictions below apply only to FMM.
+    ///
+    /// ### Extents & spacing
+    /// - `extents` defines the requested world-coordinate domain `[min_0.., max_0..]`
+    ///   and **must cover all future grid targets**. The FMM domain is built from the
+    ///   **union** of these bounds and the source-point bounding box.
+    /// - `spacing` gives the positive sample spacing on each axis. Samples begin at
+    ///   the lower bounds; the final sample may fall short of the upper bound.
+    /// - If a `global_trend` is present, the evaluator domain is transformed consistently
+    ///   with the source points.
+    ///
+    /// ### Returns
+    /// `Ok(())` once the evaluator and requested evaluation bounds have been stored.
+    ///
+    /// ### Errors
+    /// - If the bounds or spacing are invalid, the grid dimensionality differs from
+    ///   the interpolator, or the sample count exceeds `usize`.
+    /// - With FMM, later grid evaluations return an error if targets cannot be assigned
+    ///   to tree boxes. Use a sufficiently generous domain when building the evaluator.
+    ///
+    /// ### Example
+    /// ```no_run
+    /// # use ferreus_rbf::RBFInterpolator;
+    /// # let mut rbfi: RBFInterpolator = unimplemented!();
+    /// // Build for a 3D world-coordinate grid
+    /// let extents = [0.0, 0.0, 0.0, 10.0, 10.0, 10.0];
+    /// let spacing = [0.5, 0.5, 0.5];
+    /// rbfi.build_grid_evaluator(&extents, &spacing)?;
+    /// let values = rbfi.evaluate_grid_targets(&extents, &spacing)?;
+    /// # Ok::<(), ferreus_bbfmm::FmmError>(())
+    /// ```
+    pub fn build_grid_evaluator(
+        &mut self,
+        extents: &[f64],
+        spacing: &[f64],
+    ) -> Result<(), FmmError> {
+        let definition = TargetGrid::from_spacing(extents, spacing)?;
+        if spacing.len() != self.points.ncols() {
+            return Err(FmmError::InvalidTargets("grid and RBF dimensions differ"));
+        }
+        let bounds = self._get_evaluator_union_extents(None, Some(&extents.to_vec()));
+        self.evaluator = Some(self._setup_evaluator(
+            false,
+            Some(bounds),
+            FmmEvaluatorMode::Leaves,
+            Some(EvaluationTargets::Grid(&definition)),
+        ));
+        self.evaluation_extents = Some(extents.to_vec());
+        Ok(())
+    }
+
+    /// Evaluate the interpolant on a regular grid using a **one-shot** evaluator.
+    ///
+    /// This is the most convenient way to evaluate a single grid: it builds a
+    /// temporary evaluator, evaluates, and discards it. Below `direct_eval_threshold`,
+    /// kernel sums are evaluated directly; otherwise an FMM tree is used. If a
+    /// `global_trend` is present, grid targets are transformed for evaluation.
+    ///
+    /// For FMM, extents are computed as the **union** of source and requested grid
+    /// bounding boxes to ensure all targets can be assigned to tree boxes.
+    ///
+    /// ### Extents & spacing
+    /// - `extents` defines the world-coordinate grid bounds `[min_0.., max_0..]`.
+    /// - `spacing` gives the positive sample spacing on each axis. Samples begin at
+    ///   the lower bounds; the final sample may fall short of the upper bound.
+    /// - Target coordinates are generated as needed, without storing the complete
+    ///   coordinate matrix. Output rows use **C order**, with the last axis varying fastest.
+    ///
+    /// ### Returns
+    /// A `(n_targets × n_value_channels)` matrix of interpolated values.
+    ///
+    /// ### Errors
+    /// - If the bounds or spacing are invalid, the grid dimensionality differs from
+    ///   the interpolator, or the sample count exceeds `usize`.
+    /// - With FMM, if grid targets cannot be assigned to tree boxes.
+    ///
+    /// ### Accuracy & performance
+    /// For repeated evaluations (e.g. meshing, isosurfacing), prefer
+    /// [`RBFInterpolator::build_grid_evaluator`] +
+    /// [`RBFInterpolator::evaluate_grid_targets`] to amortize setup cost.
+    ///
+    /// ### Example
+    /// ```no_run
+    /// # use ferreus_rbf::RBFInterpolator;
+    /// # let rbfi: RBFInterpolator = unimplemented!();
+    /// let extents = [0.0, 0.0, 0.0, 10.0, 10.0, 10.0];
+    /// let spacing = [0.5, 0.5, 0.5];
+    /// let values = rbfi.evaluate_grid(&extents, &spacing)?;
+    /// # Ok::<(), ferreus_bbfmm::FmmError>(())
+    /// ```
+    pub fn evaluate_grid(&self, extents: &[f64], spacing: &[f64]) -> Result<Mat<f64>, FmmError> {
+        let definition = TargetGrid::from_spacing(extents, spacing)?;
+        if spacing.len() != self.points.ncols() {
+            return Err(FmmError::InvalidTargets("grid and RBF dimensions differ"));
+        }
+        let target_points = EvaluationTargets::Grid(&definition);
+        let bounds = self._get_evaluator_union_extents(None, Some(&extents.to_vec()));
+        let mut temporary = self._setup_evaluator(
+            false,
+            Some(bounds),
+            FmmEvaluatorMode::Full,
+            Some(target_points),
+        );
+        let evaluator = &mut temporary;
+        let (values, gradients) = _evaluate(EvaluatorParams {
+            evaluator,
+            target_points,
+            coefficients: &self.coefficients,
+            interpolant_settings: &self.interpolant_settings,
+            translation_factor: &self.translation_factor,
+            scale_factor: &self.scale_factor,
+            evaluate_gradients: false,
+            add_nugget: false,
+            global_trend: &self.global_trend,
+            evaluator_mode: FmmEvaluatorMode::Full,
+        })?;
+        let _ = gradients;
+        Ok(values)
+    }
+
+    /// Evaluate the interpolant and its gradient on a regular grid using a **one-shot** evaluator.
+    ///
+    /// This is the most convenient way to evaluate a single grid: it builds a
+    /// temporary evaluator, evaluates, and discards it. Below `direct_eval_threshold`,
+    /// kernel sums are evaluated directly; otherwise an FMM tree is used. If a
+    /// `global_trend` is present, grid targets are transformed for evaluation.
+    ///
+    /// For FMM, extents are computed as the **union** of source and requested grid
+    /// bounding boxes to ensure all targets can be assigned to tree boxes.
+    ///
+    /// ### Extents & spacing
+    /// - `extents` defines the world-coordinate grid bounds `[min_0.., max_0..]`.
+    /// - `spacing` gives the positive sample spacing on each axis. Samples begin at
+    ///   the lower bounds; the final sample may fall short of the upper bound.
+    /// - Target coordinates are generated as needed, without storing the complete
+    ///   coordinate matrix. Output rows use **C order**, with the last axis varying fastest.
+    ///
+    /// ### Returns
+    /// A pair of matrices: values of shape `(n_targets × n_value_channels)` and
+    /// gradients of shape `(n_targets × (n_value_channels * dimensions))`.
+    /// Gradient columns are grouped by value channel, with one column per axis.
+    ///
+    /// ### Errors
+    /// - If the bounds or spacing are invalid, the grid dimensionality differs from
+    ///   the interpolator, or the sample count exceeds `usize`.
+    /// - With FMM, if grid targets cannot be assigned to tree boxes.
+    /// - If gradient evaluation is not supported by the kernel.
+    ///
+    /// ### Accuracy & performance
+    /// For repeated evaluations (e.g. meshing, isosurfacing), prefer
+    /// [`RBFInterpolator::build_grid_evaluator`] +
+    /// [`RBFInterpolator::evaluate_grid_targets_with_gradients`] to amortize setup cost.
+    ///
+    /// ### Example
+    /// ```no_run
+    /// # use ferreus_rbf::RBFInterpolator;
+    /// # let rbfi: RBFInterpolator = unimplemented!();
+    /// let extents = [0.0, 0.0, 0.0, 10.0, 10.0, 10.0];
+    /// let spacing = [0.5, 0.5, 0.5];
+    /// let (values, gradients) = rbfi.evaluate_grid_with_gradients(&extents, &spacing)?;
+    /// # Ok::<(), ferreus_bbfmm::FmmError>(())
+    /// ```
+    pub fn evaluate_grid_with_gradients(
+        &self,
+        extents: &[f64],
+        spacing: &[f64],
+    ) -> Result<(Mat<f64>, Mat<f64>), FmmError> {
+        let definition = TargetGrid::from_spacing(extents, spacing)?;
+        if spacing.len() != self.points.ncols() {
+            return Err(FmmError::InvalidTargets("grid and RBF dimensions differ"));
+        }
+        let target_points = EvaluationTargets::Grid(&definition);
+        let bounds = self._get_evaluator_union_extents(None, Some(&extents.to_vec()));
+        let mut temporary = self._setup_evaluator(
+            false,
+            Some(bounds),
+            FmmEvaluatorMode::Full,
+            Some(target_points),
+        );
+        let evaluator = &mut temporary;
+        let (values, gradients) = _evaluate(EvaluatorParams {
+            evaluator,
+            target_points,
+            coefficients: &self.coefficients,
+            interpolant_settings: &self.interpolant_settings,
+            translation_factor: &self.translation_factor,
+            scale_factor: &self.scale_factor,
+            evaluate_gradients: true,
+            add_nugget: false,
+            global_trend: &self.global_trend,
+            evaluator_mode: FmmEvaluatorMode::Full,
+        })?;
+        Ok((values, gradients.unwrap()))
+    }
+
+    /// Evaluate the interpolant on a regular grid using the **stored evaluator**.
+    ///
+    /// This is the fast path for repeated calls. Build the evaluator first with
+    /// [`RBFInterpolator::build_grid_evaluator`] or [`RBFInterpolator::build_evaluator`].
+    /// If a `global_trend` is present, grid targets are transformed consistently
+    /// with the stored evaluator.
+    ///
+    /// ### Extents & spacing
+    /// - `extents` defines the world-coordinate grid bounds `[min_0.., max_0..]`.
+    /// - `spacing` gives the positive sample spacing on each axis. Samples begin at
+    ///   the lower bounds; the final sample may fall short of the upper bound.
+    /// - Target coordinates are generated as needed, without storing the complete
+    ///   coordinate matrix. Output rows use **C order**, with the last axis varying fastest.
+    ///
+    /// ### Returns
+    /// A `(n_targets × n_value_channels)` matrix of interpolated values.
+    ///
+    /// ### Errors
+    /// - If the bounds or spacing are invalid, the grid dimensionality differs from
+    ///   the interpolator, or the sample count exceeds `usize`.
+    /// - If called before building an evaluator.
+    /// - With FMM, if any grid targets cannot be assigned to the stored tree boxes.
+    ///
+    /// ### Example
+    /// ```no_run
+    /// # use ferreus_rbf::RBFInterpolator;
+    /// # let mut rbfi: RBFInterpolator = unimplemented!();
+    /// let extents = [0.0, 0.0, 0.0, 10.0, 10.0, 10.0];
+    /// let spacing = [0.5, 0.5, 0.5];
+    /// rbfi.build_grid_evaluator(&extents, &spacing)?;
+    /// let values = rbfi.evaluate_grid_targets(&extents, &spacing)?;
+    /// # Ok::<(), ferreus_bbfmm::FmmError>(())
+    /// ```
+    pub fn evaluate_grid_targets(
+        &mut self,
+        extents: &[f64],
+        spacing: &[f64],
+    ) -> Result<Mat<f64>, FmmError> {
+        let definition = TargetGrid::from_spacing(extents, spacing)?;
+        if spacing.len() != self.points.ncols() {
+            return Err(FmmError::InvalidTargets("grid and RBF dimensions differ"));
+        }
+        let target_points = EvaluationTargets::Grid(&definition);
+        let evaluator = self.evaluator.as_mut().ok_or(FmmError::InvalidTargets(
+            "call build_evaluator or build_grid_evaluator first",
+        ))?;
+        let (values, gradients) = _evaluate(EvaluatorParams {
+            evaluator,
+            target_points,
+            coefficients: &self.coefficients,
+            interpolant_settings: &self.interpolant_settings,
+            translation_factor: &self.translation_factor,
+            scale_factor: &self.scale_factor,
+            evaluate_gradients: false,
+            add_nugget: false,
+            global_trend: &self.global_trend,
+            evaluator_mode: FmmEvaluatorMode::Leaves,
+        })?;
+        let _ = gradients;
+        Ok(values)
+    }
+
+    /// Evaluate the interpolant and its gradient on a regular grid using the **stored evaluator**.
+    ///
+    /// This is the fast path for repeated calls. Build the evaluator first with
+    /// [`RBFInterpolator::build_grid_evaluator`] or [`RBFInterpolator::build_evaluator`].
+    /// If a `global_trend` is present, grid targets are transformed consistently
+    /// with the stored evaluator.
+    ///
+    /// ### Extents & spacing
+    /// - `extents` defines the world-coordinate grid bounds `[min_0.., max_0..]`.
+    /// - `spacing` gives the positive sample spacing on each axis. Samples begin at
+    ///   the lower bounds; the final sample may fall short of the upper bound.
+    /// - Target coordinates are generated as needed, without storing the complete
+    ///   coordinate matrix. Output rows use **C order**, with the last axis varying fastest.
+    ///
+    /// ### Returns
+    /// A pair of matrices: values of shape `(n_targets × n_value_channels)` and
+    /// gradients of shape `(n_targets × (n_value_channels * dimensions))`.
+    /// Gradient columns are grouped by value channel, with one column per axis.
+    ///
+    /// ### Errors
+    /// - If the bounds or spacing are invalid, the grid dimensionality differs from
+    ///   the interpolator, or the sample count exceeds `usize`.
+    /// - If called before building an evaluator.
+    /// - With FMM, if any grid targets cannot be assigned to the stored tree boxes.
+    /// - If gradient evaluation is not supported by the kernel.
+    ///
+    /// ### Example
+    /// ```no_run
+    /// # use ferreus_rbf::RBFInterpolator;
+    /// # let mut rbfi: RBFInterpolator = unimplemented!();
+    /// let extents = [0.0, 0.0, 0.0, 10.0, 10.0, 10.0];
+    /// let spacing = [0.5, 0.5, 0.5];
+    /// rbfi.build_grid_evaluator(&extents, &spacing)?;
+    /// let (values, gradients) = rbfi.evaluate_grid_targets_with_gradients(&extents, &spacing)?;
+    /// # Ok::<(), ferreus_bbfmm::FmmError>(())
+    /// ```
+    pub fn evaluate_grid_targets_with_gradients(
+        &mut self,
+        extents: &[f64],
+        spacing: &[f64],
+    ) -> Result<(Mat<f64>, Mat<f64>), FmmError> {
+        let definition = TargetGrid::from_spacing(extents, spacing)?;
+        if spacing.len() != self.points.ncols() {
+            return Err(FmmError::InvalidTargets("grid and RBF dimensions differ"));
+        }
+        let target_points = EvaluationTargets::Grid(&definition);
+        let evaluator = self.evaluator.as_mut().ok_or(FmmError::InvalidTargets(
+            "call build_evaluator or build_grid_evaluator first",
+        ))?;
+        let (values, gradients) = _evaluate(EvaluatorParams {
+            evaluator,
+            target_points,
+            coefficients: &self.coefficients,
+            interpolant_settings: &self.interpolant_settings,
+            translation_factor: &self.translation_factor,
+            scale_factor: &self.scale_factor,
+            evaluate_gradients: true,
+            add_nugget: false,
+            global_trend: &self.global_trend,
+            evaluator_mode: FmmEvaluatorMode::Leaves,
+        })?;
+        Ok((values, gradients.unwrap()))
+    }
+
+    /// Get the requested world-coordinate bounds of the **stored evaluator**.
+    ///
+    /// These are the bounds saved by [`RBFInterpolator::build_evaluator`] or
+    /// [`RBFInterpolator::build_grid_evaluator`], before tree padding or coordinate transforms.
+    ///
+    /// ### Returns
+    /// The bounds `[min_0.., max_0..]`, or `None` if no evaluation bounds have been stored.
+    pub fn evaluation_extents(&self) -> Option<&[f64]> {
+        self.evaluation_extents.as_deref()
     }
 
     /// Evaluate using the stored evaluator built by [`RBFInterpolator::build_evaluator`].
@@ -993,11 +1361,12 @@ impl RBFInterpolator {
     /// let values = rbfi.evaluate_targets(targets.as_ref());
     /// ```
     pub fn evaluate_targets(&mut self, target_points: MatRef<f64>) -> Mat<f64> {
+        let target_points = EvaluationTargets::Points(target_points);
         let evaluator = self.evaluator.as_mut().unwrap();
 
         let evaluator_params = EvaluatorParams {
             evaluator,
-            target_points: target_points.as_ref(),
+            target_points,
             coefficients: &self.coefficients,
             interpolant_settings: &self.interpolant_settings,
             translation_factor: &self.translation_factor,
@@ -1036,11 +1405,12 @@ impl RBFInterpolator {
         &mut self,
         target_points: MatRef<f64>,
     ) -> (Mat<f64>, Mat<f64>) {
+        let target_points = EvaluationTargets::Points(target_points);
         let evaluator = self.evaluator.as_mut().unwrap();
 
         let evaluator_params = EvaluatorParams {
             evaluator,
-            target_points: target_points.as_ref(),
+            target_points,
             coefficients: &self.coefficients,
             interpolant_settings: &self.interpolant_settings,
             translation_factor: &self.translation_factor,
@@ -1129,11 +1499,12 @@ impl RBFInterpolator {
         let evaluation_extents = isosurfacing::get_evaluation_extents(
             extents,
             resolution,
-            sampling_transform.as_ref().map(|transform| transform.as_ref()),
+            sampling_transform
+                .as_ref()
+                .map(|transform| transform.as_ref()),
         );
 
-        let evaluator_extents =
-            self._get_evaluator_union_extents(None, Some(&evaluation_extents));
+        let evaluator_extents = self._get_evaluator_union_extents(None, Some(&evaluation_extents));
 
         self.build_evaluator(Some(evaluator_extents));
 
@@ -1149,7 +1520,7 @@ impl RBFInterpolator {
             let mut evaluator = evaluator.borrow_mut();
             let params = EvaluatorParams {
                 evaluator: &mut **evaluator,
-                target_points: targets,
+                target_points: EvaluationTargets::Points(targets),
                 coefficients: coeffs,
                 interpolant_settings: settings,
                 translation_factor: translation,
@@ -1166,7 +1537,7 @@ impl RBFInterpolator {
             let mut evaluator = evaluator.borrow_mut();
             let params = EvaluatorParams {
                 evaluator: &mut **evaluator,
-                target_points: targets,
+                target_points: EvaluationTargets::Points(targets),
                 coefficients: coeffs,
                 interpolant_settings: settings,
                 translation_factor: translation,
@@ -1194,7 +1565,9 @@ impl RBFInterpolator {
                 seed_points.as_mat_ref(),
                 extents,
                 resolution,
-                sampling_transform.as_ref().map(|transform| transform.as_ref()),
+                sampling_transform
+                    .as_ref()
+                    .map(|transform| transform.as_ref()),
                 *val,
                 &mut surface_fn,
                 Some(&mut gradient_fn),
@@ -1318,15 +1691,23 @@ impl RBFInterpolator {
 /// - Adds polynomial (monomial) contribution if a polynomial basis is enabled.
 #[inline(always)]
 fn _evaluate(evaluator_params: EvaluatorParams) -> Result<(Mat<f64>, Option<Mat<f64>>), FmmError> {
-    // Borrow the targets directly when no global trend is present; only a
-    // trend transform materializes a transformed copy of the points.
-    let transformed_points;
-    let eval_points: MatRef<f64> = match evaluator_params.global_trend {
-        Some(gt) => {
-            transformed_points = gt.transform_points(evaluator_params.target_points);
-            transformed_points.as_mat_ref()
+    if let EvaluationTargets::Grid(grid) = evaluator_params.target_points {
+        if evaluator_params.global_trend.is_some()
+            || matches!(evaluator_params.evaluator, Evaluator::Direct { .. })
+        {
+            return evaluate_grid_chunks(evaluator_params, grid);
         }
-        None => evaluator_params.target_points,
+    }
+    let transformed_points;
+    let eval_targets = match (
+        evaluator_params.target_points,
+        evaluator_params.global_trend,
+    ) {
+        (EvaluationTargets::Points(points), Some(gt)) => {
+            transformed_points = gt.transform_points(points);
+            EvaluationTargets::Points(transformed_points.as_ref())
+        }
+        (targets, _) => targets,
     };
 
     let weights = evaluator_params
@@ -1340,7 +1721,10 @@ fn _evaluate(evaluator_params: EvaluatorParams) -> Result<(Mat<f64>, Option<Mat<
             kernel_params,
             batch_size,
         } => ferreus_rbf_utils::evaluate_direct(
-            eval_points,
+            match eval_targets {
+                EvaluationTargets::Points(points) => points,
+                _ => unreachable!("direct grids use bounded chunks"),
+            },
             source_points.as_mat_ref(),
             weights,
             kernel_params,
@@ -1348,17 +1732,40 @@ fn _evaluate(evaluator_params: EvaluatorParams) -> Result<(Mat<f64>, Option<Mat<
             *batch_size,
         )?,
         Evaluator::Fmm(tree) => match (evaluator_params.evaluator_mode, with_gradients) {
-            (FmmEvaluatorMode::Leaves, false) => {
-                (tree.evaluate_leaves(weights, eval_points)?, None)
-            }
-            (FmmEvaluatorMode::Full, false) => (tree.evaluate(weights, eval_points)?, None),
+            (FmmEvaluatorMode::Leaves, false) => (
+                match eval_targets {
+                    EvaluationTargets::Points(points) => tree.evaluate_leaves(weights, points)?,
+                    EvaluationTargets::Grid(grid) => tree.evaluate_grid_leaves(weights, grid)?,
+                },
+                None,
+            ),
+            (FmmEvaluatorMode::Full, false) => (
+                match eval_targets {
+                    EvaluationTargets::Points(points) => tree.evaluate(weights, points)?,
+                    EvaluationTargets::Grid(grid) => tree.evaluate_grid(weights, grid)?,
+                },
+                None,
+            ),
             (FmmEvaluatorMode::Leaves, true) => {
-                let (values, gradients) =
-                    tree.evaluate_leaves_with_gradients(weights, eval_points)?;
+                let (values, gradients) = match eval_targets {
+                    EvaluationTargets::Points(points) => {
+                        tree.evaluate_leaves_with_gradients(weights, points)?
+                    }
+                    EvaluationTargets::Grid(grid) => {
+                        tree.evaluate_grid_leaves_with_gradients(weights, grid)?
+                    }
+                };
                 (values, Some(gradients))
             }
             (FmmEvaluatorMode::Full, true) => {
-                let (values, gradients) = tree.evaluate_with_gradients(weights, eval_points)?;
+                let (values, gradients) = match eval_targets {
+                    EvaluationTargets::Points(points) => {
+                        tree.evaluate_with_gradients(weights, points)?
+                    }
+                    EvaluationTargets::Grid(grid) => {
+                        tree.evaluate_grid_with_gradients(weights, grid)?
+                    }
+                };
                 (values, Some(gradients))
             }
         },
@@ -1368,7 +1775,7 @@ fn _evaluate(evaluator_params: EvaluatorParams) -> Result<(Mat<f64>, Option<Mat<
         apply_global_trend_to_gradients(
             grads,
             gt,
-            evaluator_params.target_points.ncols(),
+            evaluator_params.target_points.dimensions(),
             evaluator_params.coefficients.point_coefficients.ncols(),
         );
     }
@@ -1381,38 +1788,120 @@ fn _evaluate(evaluator_params: EvaluatorParams) -> Result<(Mat<f64>, Option<Mat<
     }
 
     if evaluator_params.interpolant_settings.basis_size != 0 {
-        let monomials_mat = polynomials::evaluate_monomials(
-            evaluator_params.target_points,
-            &evaluator_params.interpolant_settings.polynomial_degree,
-            &evaluator_params.interpolant_settings.basis_size,
-            evaluator_params.translation_factor,
-            evaluator_params.scale_factor,
-        );
-
-        values += monomials_mat
-            * evaluator_params
-                .coefficients
-                .poly_coefficients
-                .as_ref()
-                .unwrap();
-
-        if let Some(grads) = gradients.as_mut() {
-            let poly_grads = polynomials::evaluate_monomial_gradients(
-                evaluator_params.target_points,
-                evaluator_params
-                    .coefficients
-                    .poly_coefficients
-                    .as_ref()
-                    .unwrap(),
-                evaluator_params.interpolant_settings.polynomial_degree,
-                evaluator_params.translation_factor,
-                evaluator_params.scale_factor,
-            );
-            *grads += poly_grads;
+        match evaluator_params.target_points {
+            EvaluationTargets::Points(points) => add_polynomial_terms(
+                &evaluator_params,
+                points,
+                0,
+                &mut values,
+                gradients.as_mut(),
+            ),
+            EvaluationTargets::Grid(grid) => {
+                let chunk_size = evaluator_chunk_size(evaluator_params.evaluator);
+                for start in (0..grid.point_count()).step_by(chunk_size) {
+                    let count = (grid.point_count() - start).min(chunk_size);
+                    let points = grid.points(start, count);
+                    add_polynomial_terms(
+                        &evaluator_params,
+                        points.as_ref(),
+                        start,
+                        &mut values,
+                        gradients.as_mut(),
+                    );
+                }
+            }
         }
     }
-
     Ok((values, gradients))
+}
+
+fn evaluator_chunk_size(evaluator: &Evaluator) -> usize {
+    match evaluator {
+        Evaluator::Direct { batch_size, .. } => (*batch_size).max(1),
+        Evaluator::Fmm(tree) => tree.target_chunk_size().max(1),
+    }
+}
+
+/// Preserve the existing transform/direct evaluator using bounded world-grid chunks.
+fn evaluate_grid_chunks(
+    mut params: EvaluatorParams,
+    grid: &ferreus_bbfmm::TargetGrid,
+) -> Result<(Mat<f64>, Option<Mat<f64>>), FmmError> {
+    if matches!(params.evaluator_mode, FmmEvaluatorMode::Full) {
+        if let Evaluator::Fmm(tree) = &mut params.evaluator {
+            tree.set_local_coefficients();
+        }
+    }
+    let chunk_size = evaluator_chunk_size(params.evaluator);
+    let nrhs = params.coefficients.point_coefficients.ncols();
+    let mut values = Mat::<f64>::zeros(grid.point_count(), nrhs);
+    let mut gradients = params
+        .evaluate_gradients
+        .then(|| Mat::<f64>::zeros(grid.point_count(), nrhs * grid.dimensions()));
+    for start in (0..grid.point_count()).step_by(chunk_size) {
+        let count = (grid.point_count() - start).min(chunk_size);
+        let points = grid.points(start, count);
+        let (chunk_values, chunk_gradients) = _evaluate(EvaluatorParams {
+            evaluator: &mut *params.evaluator,
+            target_points: EvaluationTargets::Points(points.as_ref()),
+            coefficients: params.coefficients,
+            interpolant_settings: params.interpolant_settings,
+            translation_factor: params.translation_factor,
+            scale_factor: params.scale_factor,
+            evaluate_gradients: params.evaluate_gradients,
+            add_nugget: false,
+            global_trend: params.global_trend,
+            evaluator_mode: FmmEvaluatorMode::Leaves,
+        })?;
+        values
+            .as_mut()
+            .subrows_mut(start, count)
+            .copy_from(chunk_values.as_ref());
+        if let (Some(output), Some(chunk)) = (gradients.as_mut(), chunk_gradients) {
+            output
+                .as_mut()
+                .subrows_mut(start, count)
+                .copy_from(chunk.as_ref());
+        }
+    }
+    Ok((values, gradients))
+}
+
+fn add_polynomial_terms(
+    params: &EvaluatorParams,
+    points: MatRef<f64>,
+    start: usize,
+    values: &mut Mat<f64>,
+    gradients: Option<&mut Mat<f64>>,
+) {
+    let settings = params.interpolant_settings;
+    let coefficients = params.coefficients.poly_coefficients.as_ref().unwrap();
+    let polynomial = polynomials::evaluate_monomials(
+        points,
+        &settings.polynomial_degree,
+        &settings.basis_size,
+        params.translation_factor,
+        params.scale_factor,
+    ) * coefficients;
+    for j in 0..values.ncols() {
+        for i in 0..points.nrows() {
+            values[(start + i, j)] += polynomial[(i, j)];
+        }
+    }
+    if let Some(output) = gradients {
+        let polynomial = polynomials::evaluate_monomial_gradients(
+            points,
+            coefficients,
+            settings.polynomial_degree,
+            params.translation_factor,
+            params.scale_factor,
+        );
+        for j in 0..output.ncols() {
+            for i in 0..points.nrows() {
+                output[(start + i, j)] += polynomial[(i, j)];
+            }
+        }
+    }
 }
 
 fn apply_global_trend_to_gradients(
@@ -1502,8 +1991,10 @@ pub(crate) fn fast_matrix_vector_product(
 
     fmm_tree.set_weights(weights.as_mat_ref());
 
-    let target_points =
-        ferreus_rbf_utils::select_mat_rows(fmm_tree.source_points().as_mat_ref(), &evaluation_indices);
+    let target_points = ferreus_rbf_utils::select_mat_rows(
+        fmm_tree.source_points().as_mat_ref(),
+        &evaluation_indices,
+    );
 
     let target_values = fmm_tree
         .evaluate(weights, target_points.as_mat_ref())
@@ -1591,11 +2082,7 @@ fn remove_duplicates(
 
     let point_indices: Vec<usize> = (0..points.nrows()).collect();
 
-    let rtree = crate::rtree::build_nd_point_rtree(
-        dims,
-        points,
-        &point_indices,
-    );
+    let rtree = crate::rtree::build_nd_point_rtree(dims, points, &point_indices);
 
     let mut visited = HashSet::new();
     let mut unique_points = Vec::new();

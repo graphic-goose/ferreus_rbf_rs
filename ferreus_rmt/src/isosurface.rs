@@ -489,7 +489,7 @@ where
 /// is used for seed projection; otherwise gradients are estimated by central differences. The
 /// selected [`ClusterMethod`] controls how topology-compatible edge intersections are combined
 /// into mesh vertices. [`BoundaryClosure`] controls whether clipped AABB boundaries are closed.
-/// 
+///
 /// `resolution` is the maximum nominal world-space sampling distance,
 /// not a maximum output triangle-edge length.
 ///

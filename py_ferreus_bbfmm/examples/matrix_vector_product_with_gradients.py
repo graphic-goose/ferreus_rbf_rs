@@ -17,9 +17,6 @@ weights = np.random.random((num_points, num_rhs))
 # A higher interpolation order is more accurate, but takes longer to compute
 interpolation_order = 7
 
-# Create an adaptive tree
-adaptive_tree = True
-
 # No need to store empty leaves for fast matrix-vector product
 sparse_tree = True
 
@@ -28,7 +25,6 @@ tree = FmmTree(
     source_points,
     interpolation_order,
     kernel_params,
-    adaptive_tree,
     sparse_tree,
 )
 

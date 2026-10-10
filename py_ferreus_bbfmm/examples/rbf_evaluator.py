@@ -1,5 +1,5 @@
 import numpy as np
-from ferreus_bbfmm import FmmTree, FmmKernelType, KernelParams, FmmParams, M2LCompressionType
+from ferreus_bbfmm import FmmTree, FmmKernelType, KernelParams, FmmParams, M2LCompressionType, TargetGrid
 
 # Choose a kernel
 kernel_params = KernelParams(FmmKernelType.LinearRbf)
@@ -17,14 +17,14 @@ weights = np.random.random((num_points, num_rhs))
 # A higher interpolation order is more accurate, but takes longer to compute
 interpolation_order = 7
 
-# Create an adaptive tree
-adaptive_tree = True
-
 # Store empty leaves for general RBF evaluation
 sparse_tree = False
 
 # For the evaluator we may wish to evaluate over a larger region than the source points cover
 extents = np.array([-2.0, -2.0, -2.0, 2.0, 2.0, 2.0])
+
+# Define a regular target grid to guide tree refinement
+grid = TargetGrid.from_spacing(extents.tolist(), [0.5] * dim)
 
 # Optionally define some tuning parameters
 params = FmmParams(
@@ -39,10 +39,10 @@ tree = FmmTree(
     source_points,
     interpolation_order,
     kernel_params,
-    adaptive_tree,
     sparse_tree,
     extents=extents,
     params=params,
+    target_grid=grid,
 )
 
 # Set the weights - this performs an upward pass through the tree
@@ -53,7 +53,7 @@ tree.set_weights(weights)
 # is used, the evaluator may be called many times. In this case it's more efficient to
 # perform a single downward pass to set all the local coefficients, then call the evaluator
 # on the relevant leaves for each evaluation
-tree.set_local_coefficients(weights)
+tree.set_local_coefficients()
 
 # Create some arbritrary target points
 num_target_points = 100
@@ -72,3 +72,7 @@ target_points = np.random.random((num_target_points, dim)) * 4 - 2
 target_values = tree.evaluate_leaves(weights, target_points)
 
 print(f"Evaluated values at target locations: {target_values}")
+
+# Reuse the same evaluator for the grid without creating all target coordinates
+grid_values = tree.evaluate_grid_leaves(weights, grid)
+print(f"Evaluated grid shape: {grid_values.shape}")

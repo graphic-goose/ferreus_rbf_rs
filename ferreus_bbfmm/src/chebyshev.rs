@@ -147,7 +147,9 @@ fn calculate_dsn_dx(
 /// The operators for the lower and upper child positions are stored as
 /// adjacent column blocks:
 ///
-///     [lower | upper]
+/// ```text
+/// [lower | upper]
+/// ```
 ///
 /// This allows each p × p operator to be accessed directly from the
 /// column-major Faer matrix.
@@ -709,9 +711,6 @@ pub fn precompute_approximation_operators<K: KernelFunction + Send + Sync>(
     // Generate the one dimensional Chebyshev nodes.
     let nodes = generate_chebyshev_nodes(&interpolation_order);
 
-    // Generate the Chebyshev nodes for the given dimensions.
-    let nodes_nd = utils::cartesian_product::<f64>(&nodes, dimensions);
-
     // Evaluate the Chebyshev polynomials of the first kind at the nodes.
     let (polynomial_nodes, _) =
         evaluate_chebyshev_polynomials(interpolation_order, interpolation_order, &nodes, false);
@@ -843,7 +842,6 @@ pub fn precompute_approximation_operators<K: KernelFunction + Send + Sync>(
 
     PrecomputeOperators {
         num_nodes_nd,
-        nodes_nd,
         polynomial_nodes,
         m2m_transfer_operators,
         u: truncated_u,
@@ -975,36 +973,4 @@ pub fn get_approximation_coefficients(
 pub struct ApproximationCoefficients {
     pub values: Mat<f64>,
     pub gradients: Option<Mat<f64>>,
-}
-
-/// Scales Chebyshev nodes from the reference domain `[-1, 1]^d`
-/// into the physical coordinates of a given FMM cell.
-///
-/// # Arguments
-///
-/// * `nodes_nd` - Tensor-product grid of Chebyshev nodes in `[-1, 1]^d` (shape `p^d × d`)
-/// * `cell_center` - Coordinates of the center of the destination cell (length `d`)
-/// * `cell_length` - Side length of the destination cell
-///
-/// # Returns
-///
-/// A new matrix of scaled Chebyshev node coordinates, transformed to lie within
-/// the specified cell bounds (shape `p^d × d`).
-pub fn scale_cheb_nodes_to_cell(
-    nodes_nd: &Mat<f64>,
-    cell_center: &Vec<f64>,
-    cell_length: &f64,
-) -> Mat<f64> {
-    let nodes_nd_shape = nodes_nd.shape();
-
-    let mut scaled_cheb_nodes = Mat::<f64>::zeros(nodes_nd_shape.0, nodes_nd_shape.1);
-
-    nodes_nd.row_iter().enumerate().for_each(|(row_idx, row)| {
-        row.iter().enumerate().for_each(|(col_idx, element)| {
-            let scaled_element = cell_center[col_idx] + (cell_length * 0.5) * element;
-            scaled_cheb_nodes[(row_idx, col_idx)] = scaled_element;
-        });
-    });
-
-    scaled_cheb_nodes
 }

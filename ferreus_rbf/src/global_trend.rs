@@ -143,10 +143,7 @@ impl GlobalTrendTransform {
                     "major_ratio must be finite and positive"
                 );
 
-                mat![
-                    [1.0, 0.0],
-                    [0.0, 1.0],
-                ]
+                mat![[1.0, 0.0], [0.0, 1.0],]
             }
             GlobalTrend::Two {
                 rotation_angle,
@@ -248,8 +245,7 @@ impl GlobalTrendTransform {
 
                 // Calculate the geometric mean normalisation ratios.
                 // Using this method ensures the ellipsoid has the same volume as a sphere.
-                let ratio_scale =
-                    (major_ratio * semi_major_ratio * minor_ratio).cbrt();
+                let ratio_scale = (major_ratio * semi_major_ratio * minor_ratio).cbrt();
 
                 let scale = mat![
                     [ratio_scale / major_ratio, 0.0, 0.0, 0.0],

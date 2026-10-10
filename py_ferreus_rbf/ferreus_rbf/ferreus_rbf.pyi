@@ -649,6 +649,241 @@ class RBFInterpolator:
         """
         ...
 
+    def build_grid_evaluator(self, extents: list[float], spacing: list[float]) -> None:
+        """Build and store a direct or FMM evaluator for **repeated grid evaluations**.
+
+        Use this when you'll call
+        [`evaluate_grid_targets`][ferreus_rbf.RBFInterpolator.evaluate_grid_targets] or
+        [`evaluate_grid_targets_with_gradients`][ferreus_rbf.RBFInterpolator.evaluate_grid_targets_with_gradients]
+        many times (e.g. during isosurfacing or interactive probing). The evaluator
+        is constructed once and saved inside the interpolator.
+
+        Below Params.direct_eval_threshold, direct evaluation accepts targets anywhere.
+        Extent restrictions apply only to FMM. The FMM domain is built from the **union**
+        of source and requested grid bounds, with local coefficients prepared for reuse.
+        When no `global_trend` is present, the grid also guides FMM evaluator tree refinement.
+
+        Parameters
+        ----------
+        extents : list[float]
+            World-coordinate grid bounds `[min_0.., max_0..]`, with two bounds per axis.
+            The bounds must be finite and ordered, and the dimensionality must match
+            the interpolator.
+        spacing : list[float]
+            Positive, finite sample spacing on each axis. Samples begin at the lower
+            bounds; the final sample may fall short of the upper bound.
+
+        Raises
+        ------
+        ValueError
+            If the bounds or spacing are invalid, the grid dimensionality differs from
+            the interpolator, or the sample count exceeds the supported index range.
+
+        Notes
+        -----
+        For FMM, the requested bounds must cover all future grid targets. If a
+        `global_trend` is present, the evaluator domain is transformed consistently
+        with the source points. Subsequent grid evaluations return an error if targets
+        cannot be assigned to the stored tree boxes.
+        """
+        ...
+
+    def evaluate_grid(self, extents: list[float], spacing: list[float]) -> npt.NDArray[np.float64]:
+        """Evaluate the interpolant on a regular grid using a **one-shot** evaluator.
+
+        This is the most convenient way to evaluate a single grid: it builds a
+        temporary evaluator, evaluates, and discards it. Direct evaluation is used
+        below Params.direct_eval_threshold; otherwise an FMM tree is used. If a
+        `global_trend` is present, grid targets are transformed for evaluation.
+
+        For FMM, extents are computed as the **union** of source and requested grid
+        bounding boxes to ensure all targets can be assigned to tree boxes.
+
+        Parameters
+        ----------
+        extents : list[float]
+            World-coordinate grid bounds `[min_0.., max_0..]`, with two bounds per axis.
+            The bounds must be finite and ordered, and the dimensionality must match
+            the interpolator.
+        spacing : list[float]
+            Positive, finite sample spacing on each axis. Samples begin at the lower
+            bounds; the final sample may fall short of the upper bound.
+
+        Returns
+        -------
+        values : npt.NDArray[np.float64]
+            Array of interpolated values with shape `grid_shape` for scalar values or
+            `grid_shape + (M,)` for multiple value columns, where M is the number of
+            columns of values interpolated. Each grid axis has
+            `floor((max_i - min_i) / spacing_i) + 1` samples, subject to floating-point
+            rounding at the upper bound. Spatial axes follow the order of `extents`
+            and `spacing`, with the last spatial axis varying fastest (C order).
+
+        Raises
+        ------
+        ValueError
+            If the bounds or spacing are invalid, the grid dimensionality differs from
+            the interpolator, or the sample count exceeds the supported index range.
+            Also raised if grid targets cannot be assigned to the FMM tree boxes.
+
+        Notes
+        -----
+        Target coordinates are generated as needed, without storing the complete
+        coordinate matrix. The returned value array is fully allocated.
+        For repeated evaluations, prefer
+        [`build_grid_evaluator`][ferreus_rbf.RBFInterpolator.build_grid_evaluator] +
+        [`evaluate_grid_targets`][ferreus_rbf.RBFInterpolator.evaluate_grid_targets] to amortize setup cost.
+        """
+        ...
+
+    def evaluate_grid_with_gradients(self, extents: list[float], spacing: list[float]) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+        """Evaluate the interpolant and its gradient on a regular grid using a **one-shot** evaluator.
+
+        This is the most convenient way to evaluate a single grid: it builds a
+        temporary evaluator, evaluates, and discards it. Direct evaluation is used
+        below Params.direct_eval_threshold; otherwise an FMM tree is used. If a
+        `global_trend` is present, grid targets are transformed for evaluation.
+
+        For FMM, extents are computed as the **union** of source and requested grid
+        bounding boxes to ensure all targets can be assigned to tree boxes.
+
+        Parameters
+        ----------
+        extents : list[float]
+            World-coordinate grid bounds `[min_0.., max_0..]`, with two bounds per axis.
+            The bounds must be finite and ordered, and the dimensionality must match
+            the interpolator.
+        spacing : list[float]
+            Positive, finite sample spacing on each axis. Samples begin at the lower
+            bounds; the final sample may fall short of the upper bound.
+
+        Returns
+        -------
+        values : npt.NDArray[np.float64]
+            Array of interpolated values with shape `grid_shape` for scalar values or
+            `grid_shape + (M,)` for multiple value columns, where M is the number of
+            columns of values interpolated. Each grid axis has
+            `floor((max_i - min_i) / spacing_i) + 1` samples, subject to floating-point
+            rounding at the upper bound. Spatial axes follow the order of `extents`
+            and `spacing`, with the last spatial axis varying fastest (C order).
+        gradients : npt.NDArray[np.float64]
+            Array of interpolated gradients with shape `grid_shape + (D,)` for scalar
+            values or `grid_shape + (M, D)` for multiple value columns, where D is the
+            dimensionality and M is the number of columns of values interpolated.
+            The final axis contains the gradient components in coordinate-axis order.
+
+        Raises
+        ------
+        ValueError
+            If the bounds or spacing are invalid, the grid dimensionality differs from
+            the interpolator, or the sample count exceeds the supported index range.
+            Also raised if grid targets cannot be assigned to the FMM tree boxes.
+            Also raised if the kernel does not support gradient evaluation.
+
+        Notes
+        -----
+        Target coordinates are generated as needed, without storing the complete
+        coordinate matrix. The returned value and gradient arrays are fully allocated.
+        For repeated evaluations, prefer
+        [`build_grid_evaluator`][ferreus_rbf.RBFInterpolator.build_grid_evaluator] +
+        [`evaluate_grid_targets_with_gradients`][ferreus_rbf.RBFInterpolator.evaluate_grid_targets_with_gradients] to amortize setup cost.
+        """
+        ...
+
+    def evaluate_grid_targets(self, extents: list[float], spacing: list[float]) -> npt.NDArray[np.float64]:
+        """Evaluate the interpolant on a regular grid using the **stored** evaluator.
+
+        Build the evaluator first with
+        [`build_grid_evaluator`][ferreus_rbf.RBFInterpolator.build_grid_evaluator] or
+        [`build_evaluator`][ferreus_rbf.RBFInterpolator.build_evaluator].
+        This is the fast path for repeated calls. If a `global_trend` is present,
+        grid targets are transformed consistently with the stored evaluator.
+
+        Parameters
+        ----------
+        extents : list[float]
+            World-coordinate grid bounds `[min_0.., max_0..]`, with two bounds per axis.
+            The bounds must be finite and ordered, and the dimensionality must match
+            the interpolator.
+        spacing : list[float]
+            Positive, finite sample spacing on each axis. Samples begin at the lower
+            bounds; the final sample may fall short of the upper bound.
+
+        Returns
+        -------
+        values : npt.NDArray[np.float64]
+            Array of interpolated values with shape `grid_shape` for scalar values or
+            `grid_shape + (M,)` for multiple value columns, where M is the number of
+            columns of values interpolated. Each grid axis has
+            `floor((max_i - min_i) / spacing_i) + 1` samples, subject to floating-point
+            rounding at the upper bound. Spatial axes follow the order of `extents`
+            and `spacing`, with the last spatial axis varying fastest (C order).
+
+        Raises
+        ------
+        ValueError
+            If the bounds or spacing are invalid, the grid dimensionality differs from
+            the interpolator, or the sample count exceeds the supported index range.
+            Also raised if no evaluator has been built, or, with FMM, if grid targets
+            cannot be assigned to the stored tree boxes.
+
+        Notes
+        -----
+        Target coordinates are generated as needed, without storing the complete
+        coordinate matrix. The returned value array is fully allocated.
+        """
+        ...
+
+    def evaluate_grid_targets_with_gradients(self, extents: list[float], spacing: list[float]) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+        """Evaluate the interpolant and its gradient on a regular grid using the **stored** evaluator.
+
+        Build the evaluator first with
+        [`build_grid_evaluator`][ferreus_rbf.RBFInterpolator.build_grid_evaluator] or
+        [`build_evaluator`][ferreus_rbf.RBFInterpolator.build_evaluator].
+        This is the fast path for repeated calls. If a `global_trend` is present,
+        grid targets are transformed consistently with the stored evaluator.
+
+        Parameters
+        ----------
+        extents : list[float]
+            World-coordinate grid bounds `[min_0.., max_0..]`, with two bounds per axis.
+            The bounds must be finite and ordered, and the dimensionality must match
+            the interpolator.
+        spacing : list[float]
+            Positive, finite sample spacing on each axis. Samples begin at the lower
+            bounds; the final sample may fall short of the upper bound.
+
+        Returns
+        -------
+        values : npt.NDArray[np.float64]
+            Array of interpolated values with shape `grid_shape` for scalar values or
+            `grid_shape + (M,)` for multiple value columns, where M is the number of
+            columns of values interpolated. Each grid axis has
+            `floor((max_i - min_i) / spacing_i) + 1` samples, subject to floating-point
+            rounding at the upper bound. Spatial axes follow the order of `extents`
+            and `spacing`, with the last spatial axis varying fastest (C order).
+        gradients : npt.NDArray[np.float64]
+            Array of interpolated gradients with shape `grid_shape + (D,)` for scalar
+            values or `grid_shape + (M, D)` for multiple value columns, where D is the
+            dimensionality and M is the number of columns of values interpolated.
+            The final axis contains the gradient components in coordinate-axis order.
+
+        Raises
+        ------
+        ValueError
+            If the bounds or spacing are invalid, the grid dimensionality differs from
+            the interpolator, or the sample count exceeds the supported index range.
+            Also raised if no evaluator has been built, or, with FMM, if grid targets
+            cannot be assigned to the stored tree boxes.
+            Also raised if the kernel does not support gradient evaluation.
+
+        Notes
+        -----
+        Target coordinates are generated as needed, without storing the complete
+        coordinate matrix. The returned value and gradient arrays are fully allocated.
+        """
+        ...
+
     def evaluate_targets(
         self,
         targets: npt.NDArray[np.float64]

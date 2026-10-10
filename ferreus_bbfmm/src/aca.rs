@@ -180,7 +180,10 @@ fn argmax_masked(data: &RowRef<f64>, mask: &[u8]) -> usize {
 pub fn recompress_aca(u_aca: &Mat<f64>, v_aca: &Mat<f64>, epsilon: &f64) -> (Mat<f64>, Mat<f64>) {
     // Handle rank-0 case (empty factors from compactly supported kernels)
     if u_aca.ncols() == 0 {
-        return (Mat::<f64>::zeros(u_aca.nrows(), 0), Mat::<f64>::zeros(0, v_aca.nrows()));
+        return (
+            Mat::<f64>::zeros(u_aca.nrows(), 0),
+            Mat::<f64>::zeros(0, v_aca.nrows()),
+        );
     }
 
     // QR decomposition of ACA factors

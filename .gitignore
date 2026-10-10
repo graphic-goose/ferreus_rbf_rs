@@ -210,3 +210,5 @@ cython_debug/
 *.obj
 
 .agents
+
+_testing_*

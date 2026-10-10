@@ -16,8 +16,8 @@
 //! querying of neighbouring/intersecting points.
 
 use faer::MatRef;
-use rstar::primitives::GeomWithData;
 use rstar::RTree;
+use rstar::primitives::GeomWithData;
 
 type IndexedPoint<const D: usize> = GeomWithData<[f64; D], usize>;
 
@@ -44,33 +44,16 @@ impl NdPointRTree {
 
     /// Returns the global indices of points within an infinity-norm distance
     /// of the supplied point.
-    pub(crate) fn within_distance_inf(
-        &self,
-        point: &[f64],
-        distance: f64,
-    ) -> Vec<usize> {
+    pub(crate) fn within_distance_inf(&self, point: &[f64], distance: f64) -> Vec<usize> {
         let mut result = match self {
-            Self::D1(tree) => points_in_box(
-                tree,
-                [point[0], 0.0],
-                distance,
-            ),
-            Self::D2(tree) => points_in_box(
-                tree,
-                [point[0], point[1]],
-                distance,
-            ),
-            Self::D3(tree) => points_in_box(
-                tree,
-                [point[0], point[1], point[2]],
-                distance,
-            ),
+            Self::D1(tree) => points_in_box(tree, [point[0], 0.0], distance),
+            Self::D2(tree) => points_in_box(tree, [point[0], point[1]], distance),
+            Self::D3(tree) => points_in_box(tree, [point[0], point[1], point[2]], distance),
         };
 
         result.sort_unstable();
         result
     }
-
 }
 
 fn nearest_points<const D: usize>(
@@ -99,9 +82,7 @@ pub(crate) fn build_nd_point_rtree(
         2 => NdPointRTree::D2(RTree::bulk_load(
             indices
                 .iter()
-                .map(|&index| {
-                    GeomWithData::new([points[(index, 0)], points[(index, 1)]], index)
-                })
+                .map(|&index| GeomWithData::new([points[(index, 0)], points[(index, 1)]], index))
                 .collect(),
         )),
         3 => NdPointRTree::D3(RTree::bulk_load(
@@ -126,10 +107,8 @@ fn points_in_box<const D: usize>(
 ) -> Vec<usize> {
     use rstar::AABB;
 
-    let minimum =
-        std::array::from_fn(|dimension| point[dimension] - distance);
-    let maximum =
-        std::array::from_fn(|dimension| point[dimension] + distance);
+    let minimum = std::array::from_fn(|dimension| point[dimension] - distance);
+    let maximum = std::array::from_fn(|dimension| point[dimension] + distance);
 
     let envelope = AABB::from_corners(minimum, maximum);
 

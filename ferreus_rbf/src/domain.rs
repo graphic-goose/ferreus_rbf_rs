@@ -215,8 +215,10 @@ impl Domain {
             special_point_indices.sort();
 
             // Extract the special point monomials.
-            let special_point_monomials =
-                ferreus_rbf_utils::select_mat_rows(full_rank_monomials.as_ref(), &special_point_indices);
+            let special_point_monomials = ferreus_rbf_utils::select_mat_rows(
+                full_rank_monomials.as_ref(),
+                &special_point_indices,
+            );
 
             // Reorder overlapping point indices so special points come first.
             let special_points_set: HashSet<usize> =

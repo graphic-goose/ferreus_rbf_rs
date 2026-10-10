@@ -16,7 +16,7 @@ use‑cases where the kernel is smooth (i.e. non‑oscillatory).
 
 - 1D (binary tree), 2D (quadtree) and 3D (octree) trees
 - Optimised low‑rank M2L interactions that leverage symmetries and compression
-- Adaptive and non‑adaptive tree structures
+- Adaptive tree structure
 - Support for multiple right‑hand sides
 - Designed to work with user‑defined kernels via traits
 - Optional simultaneous evaluation of kernel values and gradients

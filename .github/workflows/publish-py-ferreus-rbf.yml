@@ -36,7 +36,7 @@ jobs:
       - name: Build with maturin
         uses: PyO3/maturin-action@v1
         with:
-          rust-toolchain: "1.85.0"
+          rust-toolchain: "1.97.1"
           command: build
           args: --release --strip --out dist -m py_ferreus_rbf/Cargo.toml ${{ matrix.extra-args }}
 
