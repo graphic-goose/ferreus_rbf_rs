@@ -14,7 +14,7 @@ use crate::{
 use faer::mat::AsMatRef;
 use faer::{Mat, MatRef};
 use rayon::prelude::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::{self, Debug};
 use std::sync::Arc;
 
@@ -175,11 +175,12 @@ pub struct TreeLists {
     /// Mapping from each cell to its children.
     pub children: HashMap<u64, Vec<u64>>,
 
-    /// Mapping from each leaf cell to adjacent leaf cells (P2P).
-    pub u_lists: HashMap<u64, HashSet<u64>>,
+    /// Mapping from each leaf cell to adjacent leaf cells (P2P), sorted by Morton code.
+    pub u_lists: HashMap<u64, Vec<u64>>,
 
-    /// Mapping from each cell to non-adjacent children of parent's colleagues (M2L).
-    pub v_lists: HashMap<u64, HashSet<u64>>,
+    /// Mapping from each cell to non-adjacent children of parent's colleagues (M2L), sorted by
+    /// Morton code.
+    pub v_lists: HashMap<u64, Vec<u64>>,
 
     /// Maps tree level to Morton codes at that level.
     pub level_cells_map: HashMap<u64, Vec<u64>>,
@@ -1108,7 +1109,7 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
         &self,
         key: u64,
         level: u64,
-        v_list: &HashSet<u64>,
+        v_list: &[u64],
         local_coefficients_ref: &Mat<f64>,
         cell_column_index: &usize,
     ) {
@@ -1116,7 +1117,7 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
             morton::get_center_length(key, &self.center, self.radius, &self.dimensions);
 
         // Map the v-cells to the unique reference vectors required.
-        let mut unique_reference_vectors: HashMap<usize, Vec<(u64, usize)>> = HashMap::new();
+        let mut unique_reference_vectors: BTreeMap<usize, Vec<(u64, usize)>> = BTreeMap::new();
 
         v_list.iter().for_each(|v_cell| {
             let (v_center, _v_length) =
@@ -1392,7 +1393,7 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
     /// Direct interaction between particles of adjacent leaf cells.
     fn particle_to_particle<const WITH_GRADS: bool, const D: usize>(
         &self,
-        u_list: &HashSet<u64>,
+        u_list: &[u64],
         target_points: EvaluationTargets,
         cell_target_indices: &[usize],
         target_values_ref: MatRef<f64>,
@@ -1576,8 +1577,10 @@ impl<K: KernelFunction + Send + Sync> FmmTree<K> {
 
 #[cfg(test)]
 mod tests {
-    use super::{FmmError, FmmTree, KernelFunction};
-    use faer::{RowRef, mat};
+    use super::{FmmError, FmmParams, FmmTree, KernelFunction};
+    use faer::{Mat, RowRef, mat};
+    use rand::rngs::StdRng;
+    use rand::{Rng, SeedableRng};
     use std::sync::Arc;
 
     struct TestKernel;
@@ -1629,6 +1632,54 @@ mod tests {
                 assert_eq!(point_index, 1);
             }
             other => panic!("Expected PointOutsideTree error, got {:?}", other),
+        }
+    }
+
+    /// Ensure that separate trees built from the same inputs give bitwise identical results.
+    #[test]
+    fn evaluate_is_identical_across_trees_with_same_inputs() {
+        let mut rng = StdRng::seed_from_u64(42);
+        let num_points = 4000;
+        let source_points = Arc::new(Mat::from_fn(num_points, 3, |_, _| {
+            rng.random_range(-1.0..1.0)
+        }));
+        let weights = Mat::from_fn(num_points, 1, |_, _| rng.random_range(-1.0..1.0));
+        // Evaluate at the sources, as RBF matvecs do; sparse trees omit cells without sources.
+        let target_points = source_points.as_ref().clone();
+        let interpolation_order = 5;
+        let params = FmmParams {
+            max_points_per_cell: 32,
+            ..FmmParams::new_defaults(interpolation_order)
+        };
+
+        for sparse_tree in [true, false] {
+            let evaluate_new_tree = || {
+                let mut tree = FmmTree::new(
+                    source_points.clone(),
+                    interpolation_order,
+                    TestKernel,
+                    sparse_tree,
+                    None,
+                    Some(params),
+                );
+                tree.set_weights(weights.as_ref());
+                tree.evaluate(weights.as_ref(), target_points.as_ref())
+                    .unwrap()
+            };
+
+            let expected = evaluate_new_tree();
+            for _ in 0..4 {
+                let actual = evaluate_new_tree();
+                for i in 0..expected.nrows() {
+                    assert_eq!(
+                        expected[(i, 0)].to_bits(),
+                        actual[(i, 0)].to_bits(),
+                        "sparse_tree={sparse_tree}, target {i}: {} != {}",
+                        expected[(i, 0)],
+                        actual[(i, 0)],
+                    );
+                }
+            }
         }
     }
 }

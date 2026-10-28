@@ -85,7 +85,12 @@ pub fn build_tree(
                     let all_children = morton::get_children(cell, &dimensions);
                     all_children
                 }
-                false => cell_children.iter().copied().collect(),
+                false => {
+                    // Sort so parents sum their children in a fixed order.
+                    let mut children: Vec<u64> = cell_children.iter().copied().collect();
+                    children.sort_unstable();
+                    children
+                }
             };
 
             for &child in &active_children {
@@ -159,8 +164,8 @@ pub fn get_interaction_lists(
     tree_radius: f64,
     dimensions: &Dimensions,
 ) -> (
-    HashMap<u64, HashSet<u64>>,
-    HashMap<u64, HashSet<u64>>,
+    HashMap<u64, Vec<u64>>,
+    HashMap<u64, Vec<u64>>,
     HashMap<u64, usize>,
 ) {
     // Definitions
@@ -310,7 +315,7 @@ pub fn get_interaction_lists(
             inherited_directs.insert(key, direct);
         }
         if !far.is_empty() {
-            v_lists.insert(key, far);
+            v_lists.insert(key, sorted_keys(&far));
         }
     }
 
@@ -328,7 +333,7 @@ pub fn get_interaction_lists(
             if direct.is_empty() {
                 None
             } else {
-                Some((leaf, direct))
+                Some((leaf, sorted_keys(&direct)))
             }
         })
         .collect();
@@ -343,6 +348,14 @@ pub fn get_interaction_lists(
         .collect();
 
     (u_lists, v_lists, source_key_to_index_map)
+}
+
+/// Returns the keys in ascending order, so FMM passes sum interactions in the same order on
+/// every run instead of in the randomised order of a `HashSet`.
+fn sorted_keys(keys: &HashSet<u64>) -> Vec<u64> {
+    let mut sorted: Vec<u64> = keys.iter().copied().collect();
+    sorted.sort_unstable();
+    sorted
 }
 
 pub fn points_to_keys(
